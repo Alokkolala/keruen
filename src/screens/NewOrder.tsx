@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Header, TabBar, TitleBar, Button } from '../ui/Shell'
+import { Header, TabBar, TitleBar, Button, Failed } from '../ui/Shell'
 import { Icon } from '../ui/Icon'
 import { api } from '../lib/data'
 
@@ -16,6 +16,7 @@ interface Parsed {
   to_id: string | null
   loaders: number
   deadline_hint: string | null
+  deadline: string | null
   raw_text: string
 }
 
@@ -60,8 +61,12 @@ export default function NewOrder() {
     setError(null)
     try {
       const parsed = await api<Parsed>('parse', { text })
-      sessionStorage.setItem('keruen:draft', JSON.stringify(parsed))
-      nav('/confirm')
+      // Адреса заполняются на следующем экране, на карте.
+      sessionStorage.setItem(
+        'keruen:draft',
+        JSON.stringify({ from_address: null, to_address: null, ...parsed }),
+      )
+      nav('/confirm', { viewTransition: true })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -114,7 +119,7 @@ export default function NewOrder() {
         ))}
       </div>
 
-      {error && <p className="text-[12.5px] text-red-600">{error}</p>}
+      {error && <Failed title="Не разобрал заявку" detail={error} onRetry={submit} />}
 
       <Button onClick={submit} disabled={busy || !text.trim()}>
         {busy ? 'Разбираю заявку…' : 'Продолжить'}
