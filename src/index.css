@@ -1,0 +1,70 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-bg: #f2f0ee;
+  --color-card: #fcfbf9;
+  --color-ink: #1c1c1a;
+  --color-muted: #8e8c88;
+  --color-line: #e0dedb;
+  --color-yellow: #fdcd44;
+  --color-yellow-ink: #d99c19;
+  --color-chip-y: #faeed0;
+  --color-chip-g: #e0efd8;
+  --color-green: #4aa547;
+  --color-green-ink: #2e7a38;
+  --color-gray-btn: #e5e3e1;
+
+  --font-sans: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+/* цифры не должны прыгать в счётчиках и ценах */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* мобильный экран: контент скроллится, таббар прижат */
+.screen {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 18px 16px calc(16px + env(safe-area-inset-bottom));
+  gap: 12px;
+}
+
+.card {
+  background: var(--color-card);
+  border-radius: 22px;
+  box-shadow: 0 4px 18px rgb(0 0 0 / 0.04);
+}
+
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rise {
+  animation: riseIn 0.28s ease-out both;
+}

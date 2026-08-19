@@ -1,9 +1,72 @@
-<!-- BEGIN:nextjs-agent-rules -->
+# KERUEN
 
-# This is NOT the Next.js you know
+AI-агент, который строит перевозчикам грузовой день без порожних километров.
+Мангистауская область.
 
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+## Стек
 
-This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+Vite 8 + React 19 + TypeScript + Tailwind 4. Данные — Supabase (Postgres + realtime).
+Серверная логика — функции Vercel в `/api`. Деплой на Vercel.
 
-<!-- END:nextjs-agent-rules -->
+## Что здесь настоящее
+
+Никаких моков в продуктовой логике:
+
+- **Маршруты** — OSRM, реальная дорожная сеть. `api/_lib/tools.ts → routeBetween`
+- **Погода** — Open-Meteo, фактические данные по координатам. `weatherAt`
+- **Адреса** — Nominatim. `geocode`
+- **Цена** — выводится из километров, расхода дизеля и тоннажа. `priceRange`
+- **Агент** — OpenRouter с tool-calling. Модель сама вызывает инструменты
+  и пишет лог прямо в базу, поэтому оба телефона видят его работу вживую.
+
+Калибровочные константы (цена дизеля, расход на 100 км) собраны в `PRICING`
+в `api/_lib/tools.ts` — их надо подкручивать под реальные цифры, а не считать
+верными по умолчанию.
+
+## Запуск
+
+```bash
+cp .env.example .env.local   # заполнить ключи
+npm install
+npm run dev                  # http://localhost:5173, доступно и по локальной сети
+```
+
+Схему базы выполнить один раз: содержимое `supabase/schema.sql` в
+Supabase → SQL Editor.
+
+Функции из `/api` в дев-режиме поднимает `vite-api-plugin.ts`, Vercel CLI не нужен.
+
+## Демо на двух телефонах
+
+- Телефон отправителя: `/` → создать заказ → живой лог агента
+- Телефон перевозчика: `/carrier` → прилетает предложение → «Беру»
+- После «Беру» экран отправителя сам уходит на результат — через realtime
+
+## Роутинг
+
+| Путь | Экран |
+|---|---|
+| `/` | Главная отправителя |
+| `/new` | Новый заказ, текст или голос |
+| `/confirm` | Что понял агент, поля правятся |
+| `/working/:id` | Живой лог агента |
+| `/result/:id` | Найденный вариант и экономия |
+| `/orders` | Мои заказы |
+| `/track/:id` | Груз в пути |
+| `/carrier` | Главная перевозчика, входящие предложения |
+| `/day` | День перевозчика |
+
+## Модель данных
+
+Заказ хранит **список плеч** (`legs`), а не пару откуда/куда. Поэтому
+внутригородская доставка — это заказ из одного короткого плеча, а межгород
+с развозкой — из трёх. Переписывать схему под город не придётся.
+
+`points.kind` различает `city | settlement | address`.
+`legs.source` честно помечает, откуда взято время: `osrm` или `estimate`.
+
+## Дизайн
+
+Макеты в Figma: файл `XvRRgFAKa4Ihh6d1XGZCqd`, страница «Keruen · Главная».
+Токены продублированы в `src/index.css` — при правке цветов менять оба места.
+3D-иллюстрации и знак в `public/assets`, вырезаны с прозрачным фоном.
