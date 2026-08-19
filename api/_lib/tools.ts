@@ -153,6 +153,29 @@ export async function geocode(query: string, near?: Point) {
   }))
 }
 
+/** Адрес по координатам — для пина, который двигают пальцем на карте. */
+export async function reverseGeocode(lat: number, lon: number) {
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lon: String(lon),
+    format: 'json',
+    zoom: '18',
+    'accept-language': 'ru',
+  })
+  const res = await fetch(`https://nominatim.openstreetmap.org/reverse?${params}`, {
+    headers: { 'User-Agent': 'keruen-hackathon/1.0 (contact: demo@keruen.kz)' },
+    signal: AbortSignal.timeout(8000),
+  })
+  if (!res.ok) return null
+  const json = (await res.json()) as { display_name?: string; address?: Record<string, string> }
+  const a = json.address ?? {}
+  // display_name тянет всю страну с индексом — для карточки заказа берём короткое.
+  const short = [a.road && [a.road, a.house_number].filter(Boolean).join(' '), a.suburb ?? a.neighbourhood]
+    .filter(Boolean)
+    .join(', ')
+  return short || json.display_name || null
+}
+
 /** Сколько порожних километров убирает стыковка: путь перевозчика до забора. */
 export async function emptyKmSaved(carrierAt: Point, pickup: Point, dropoff: Point) {
   const [toPickup, loaded] = await Promise.all([

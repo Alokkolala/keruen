@@ -10,66 +10,28 @@ import {
 } from './_lib/tools.js'
 
 const MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-oss-120b'
-const MAX_STEPS = 8 // keruen: жёсткий предел, чтобы агент не зациклился на демо
+const MAX_STEPS = 4 // keruen: жёсткий предел, чтобы агент не зациклился на демо
 
+// Маршрут, погоду и цену модель раньше добывала пятью последовательными
+// вызовами — пять полных round-trip к OpenRouter, отсюда полминуты ожидания.
+// Ни один из этих трёх шагов не требует решения: расстояние есть расстояние.
+// Считаем их сами и параллельно, а модели оставляем то, где решение
+// действительно есть — кого позвать и по какой цене.
 const SYSTEM = `Ты — караван-баши KERUEN, логистический агент Мангистауской области.
-Отправитель описывает груз обычными словами. Твоя работа:
-1. вызвать get_route, чтобы узнать реальное расстояние и время;
-2. вызвать get_weather в точке погрузки — от погоды зависит тип кузова;
-3. вызвать estimate_price, чтобы получить справедливую вилку;
-4. вызвать find_carriers, чтобы найти подходящие машины;
-5. вызвать make_offers, чтобы отправить предложения лучшим перевозчикам.
+Маршрут, погода и справедливая вилка цены уже посчитаны и даны тебе в сообщении.
+
+Твоя работа:
+1. вызвать find_carriers, чтобы получить машины под этот груз;
+2. вызвать make_offers и позвать 2-3 лучших по цене внутри данной вилки.
 
 Правила:
-- Никогда не выдумывай цифры. Расстояние, погода и цена берутся только из инструментов.
-- Вызывай инструменты по одному, в этом порядке.
+- Никогда не выдумывай цифры. Расстояние, погода и цена уже даны — бери их как есть.
+- Цена в make_offers обязана лежать внутри вилки.
+- Можешь вызвать оба инструмента сразу, одним ходом.
 - После make_offers сразу заверши работу коротким текстом на русском (одно предложение).
 - Не пиши длинных рассуждений — только вызовы инструментов и финальная фраза.`
 
 const TOOLS = [
-  {
-    type: 'function',
-    function: {
-      name: 'get_route',
-      description: 'Расстояние и время в пути по реальной дорожной сети между двумя точками.',
-      parameters: {
-        type: 'object',
-        properties: {
-          from_id: { type: 'string', description: 'id точки отправления' },
-          to_id: { type: 'string', description: 'id точки назначения' },
-        },
-        required: ['from_id', 'to_id'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_weather',
-      description: 'Фактическая погода в точке: температура, осадки, ветер.',
-      parameters: {
-        type: 'object',
-        properties: { point_id: { type: 'string' } },
-        required: ['point_id'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'estimate_price',
-      description: 'Справедливая вилка цены из километров, тоннажа и расхода дизеля.',
-      parameters: {
-        type: 'object',
-        properties: {
-          distance_km: { type: 'number' },
-          weight_t: { type: 'number' },
-          loaders: { type: 'number' },
-        },
-        required: ['distance_km', 'weight_t'],
-      },
-    },
-  },
   {
     type: 'function',
     function: {
@@ -124,62 +86,75 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const now = () =>
     new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
 
-  async function pushStep(text: string, detail?: string) {
-    log.push({ at: now(), text, detail, state: 'done' })
+  async function pushStep(text: string, detail?: string, state: Step['state'] = 'done') {
+    log.push({ at: now(), text, detail, state })
     // Пишем сразу — на телефонах лог появляется в реальном времени через realtime.
     await db.from('orders').update({ agent_log: log }).eq('id', orderId)
   }
 
+  /** Честная остановка: пользователь видит причину, а не вечный спиннер. */
+  async function bail(text: string, detail: string, code = 502) {
+    log.push({ at: now(), text, detail, state: 'wait' })
+    await db.from('orders').update({ status: 'draft', agent_log: log }).eq('id', orderId)
+    return res.status(code).json({ error: `${text}: ${detail}`, log })
+  }
+
   await db.from('orders').update({ status: 'searching', agent_log: [] }).eq('id', orderId)
 
+  const from = points.get(order.from_id ?? '')
+  const to = points.get(order.to_id ?? '')
+  if (!from || !to) return bail('Не знаю точки маршрута', 'проверьте «откуда» и «куда»', 400)
+
   const patch: Record<string, unknown> = {}
-  let chosenBody = 'борт'
   let lastCarriers: { id: string; name: string; vehicle: string }[] = []
+  let offersSent = false
+
+  // --- Маршрут и погода одновременно: друг от друга они не зависят.
+  const [route, weather] = await Promise.all([routeBetween(from, to), weatherAt(from)])
+
+  if (!route) return bail('Маршрут не рассчитан', 'OSRM не ответил, попробуйте ещё раз')
+
+  patch.distance_km = route.distance_km
+  patch.duration_min = route.duration_min
+  await pushStep(
+    `Маршрут рассчитан — ${route.distance_km} км`,
+    `${from.name} → ${to.name} · ${Math.floor(route.duration_min / 60)} ч ${route.duration_min % 60} мин`,
+  )
+
+  // Погода не критична: без неё едем, просто не сужаем тип кузова.
+  const need = requirementsFor(order.cargo ?? '', weather)
+  const chosenBody = need.body
+  if (weather) {
+    patch.weather = weather
+    await pushStep(
+      `Погода в ${from.name} — ${weather.temp_c} °C, ${weather.description}`,
+      need.notes[0],
+    )
+  } else {
+    await pushStep('Погода недоступна', 'Open-Meteo молчит — кузов подбираю по грузу', 'wait')
+  }
+
+  // --- Цена. Чистая арифметика от километров, тоннажа и дизеля.
+  const price = priceRange(route.distance_km, Number(order.weight_t) || 1, order.loaders ?? 0)
+  patch.fuel_cost = price.fuel_cost
+  patch.price_min = price.min
+  patch.price_max = price.max
+  await pushStep(
+    `Справедливая цена — ${price.min.toLocaleString('ru-RU')}–${price.max.toLocaleString('ru-RU')} ₸`,
+    `дизель ${price.litres} л ≈ ${price.fuel_cost.toLocaleString('ru-RU')} ₸`,
+  )
+
+  // Цифры уже в базе — отправитель видит их, пока модель ещё думает над машинами.
+  await db.from('orders').update(patch).eq('id', orderId)
 
   async function runTool(name: string, args: Record<string, any>): Promise<unknown> {
     switch (name) {
-      case 'get_route': {
-        const a = points.get(args.from_id)
-        const b = points.get(args.to_id)
-        if (!a || !b) return { error: 'Неизвестная точка' }
-        const r = await routeBetween(a, b)
-        if (!r) return { error: 'OSRM не ответил' }
-        patch.distance_km = r.distance_km
-        patch.duration_min = r.duration_min
-        await pushStep(
-          `Маршрут рассчитан — ${r.distance_km} км`,
-          `${a.name} → ${b.name} · ${Math.floor(r.duration_min / 60)} ч ${r.duration_min % 60} мин`,
-        )
-        return r
-      }
-      case 'get_weather': {
-        const p = points.get(args.point_id)
-        if (!p) return { error: 'Неизвестная точка' }
-        const w = await weatherAt(p)
-        if (!w) return { error: 'Open-Meteo не ответил' }
-        patch.weather = w
-        const req = requirementsFor(order.cargo ?? '', w)
-        chosenBody = req.body
-        await pushStep(
-          `Погода в ${p.name} — ${w.temp_c} °C, ${w.description}`,
-          req.notes[0],
-        )
-        return { ...w, recommended_body: req.body, note: req.notes[0] }
-      }
-      case 'estimate_price': {
-        const p = priceRange(args.distance_km, args.weight_t, args.loaders ?? order.loaders ?? 0)
-        patch.fuel_cost = p.fuel_cost
-        patch.price_min = p.min
-        patch.price_max = p.max
-        await pushStep(
-          `Справедливая цена — ${p.min.toLocaleString('ru-RU')}–${p.max.toLocaleString('ru-RU')} ₸`,
-          `дизель ${p.litres} л ≈ ${p.fuel_cost.toLocaleString('ru-RU')} ₸`,
-        )
-        return p
-      }
       case 'find_carriers': {
-        let q = db.from('carriers').select('*').eq('online', true).gte('capacity_t', args.weight_t)
-        const { data } = await q
+        const { data } = await db
+          .from('carriers')
+          .select('*')
+          .eq('online', true)
+          .gte('capacity_t', args.weight_t ?? order.weight_t ?? 0)
         const body = args.body || chosenBody
         const list = (data ?? [])
           .filter((c: any) => (body === 'реф' ? c.body === 'реф' : c.body !== 'реф'))
@@ -187,7 +162,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         lastCarriers = list.map((c: any) => ({ id: c.id, name: c.name, vehicle: c.vehicle }))
         await pushStep(
           `Найдено подходящих машин — ${list.length}`,
-          `кузов ${body}, от ${args.weight_t} т`,
+          `кузов ${body}, от ${args.weight_t ?? order.weight_t} т`,
         )
         return list.map((c: any) => ({
           id: c.id,
@@ -200,7 +175,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       case 'make_offers': {
         const ids: string[] = (args.carrier_ids ?? []).slice(0, 3)
-        const price = Math.round(args.price)
+        // Модель иногда съезжает с вилки — держим её в границах, цифры тут наши.
+        const asked = Math.round(Number(args.price) || price.min)
+        const offerPrice = Math.min(Math.max(asked, price.min), price.max)
         if (!ids.length) return { error: 'Пустой список перевозчиков' }
 
         await db.from('offers').delete().eq('order_id', orderId)
@@ -208,19 +185,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ids.map((cid) => ({
             order_id: orderId,
             carrier_id: cid,
-            price,
+            price: offerPrice,
             status: 'sent',
             reason: `кузов ${chosenBody}, цена в справедливой вилке`,
           })),
         )
 
-        // Экономия порожних: путь машины до забора против гружёного плеча.
-        const from = points.get(order.from_id!)
-        const to = points.get(order.to_id!)
-        if (from && to) {
-          const saved = await emptyKmSaved(from, from, to)
-          if (saved) patch.empty_km = saved.saved_km
-        }
+        // Экономия порожних: обратное плечо, которое теперь не пустое.
+        const saved = await emptyKmSaved(from!, from!, to!)
+        if (saved) patch.empty_km = saved.saved_km
 
         const names = lastCarriers
           .filter((c) => ids.includes(c.id))
@@ -228,17 +201,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .join(', ')
         await pushStep(
           `Предложения отправлены — ${ids.length}`,
-          `${names || 'перевозчикам'} · ${price.toLocaleString('ru-RU')} ₸`,
+          `${names || 'перевозчикам'} · ${offerPrice.toLocaleString('ru-RU')} ₸`,
         )
-        return { sent: ids.length, price }
+        offersSent = true
+        return { sent: ids.length, price: offerPrice }
       }
       default:
         return { error: `Неизвестный инструмент ${name}` }
     }
   }
 
-  const from = points.get(order.from_id ?? '')
-  const to = points.get(order.to_id ?? '')
+  const deadline = order.deadline
+    ? new Date(order.deadline).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })
+    : null
 
   const messages: any[] = [
     { role: 'system', content: SYSTEM },
@@ -246,10 +221,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       role: 'user',
       content:
         `Заявка: ${order.raw_text ?? ''}\n` +
-        `Разобрано: груз «${order.cargo}», ${order.weight_t} т, ` +
-        `откуда ${from?.name} (id: ${order.from_id}), куда ${to?.name} (id: ${order.to_id}), ` +
-        `грузчиков: ${order.loaders ?? 0}.\n` +
-        `Начинай с get_route.`,
+        `Груз «${order.cargo}», ${order.weight_t} т, грузчиков ${order.loaders ?? 0}.\n` +
+        `Откуда ${from.name} (id: ${order.from_id})` +
+        `${order.from_address ? `, адрес: ${order.from_address}` : ''}.\n` +
+        `Куда ${to.name} (id: ${order.to_id})` +
+        `${order.to_address ? `, адрес: ${order.to_address}` : ''}.\n` +
+        (deadline ? `Срок доставки: до ${deadline}.\n` : '') +
+        `Уже посчитано: ${route.distance_km} км, ${route.duration_min} мин в пути.\n` +
+        (weather
+          ? `Погода в точке погрузки: ${weather.temp_c} °C, ${weather.description}, ветер ${weather.wind_ms} м/с.\n`
+          : `Погода недоступна.\n`) +
+        `Рекомендованный кузов: ${chosenBody} (${need.notes[0]}).\n` +
+        `Справедливая вилка: ${price.min}–${price.max} ₸.\n` +
+        `Вызывай find_carriers и make_offers.`,
     },
   ]
 
@@ -263,7 +247,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           'X-Title': 'KERUEN',
         },
         body: JSON.stringify({ model: MODEL, messages, tools: TOOLS, temperature: 0.2 }),
-        signal: AbortSignal.timeout(45000),
+        signal: AbortSignal.timeout(30000),
       })
       if (!r.ok) {
         const body = await r.text()
@@ -277,6 +261,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const calls = msg.tool_calls ?? []
       if (!calls.length) break
 
+      // Модель может позвать оба инструмента одним ходом — тогда порядок важен:
+      // find_carriers обязан отработать раньше make_offers.
+      calls.sort((a: any, b: any) =>
+        a.function.name === 'find_carriers' && b.function.name !== 'find_carriers' ? -1 : 0,
+      )
       for (const call of calls) {
         let args: Record<string, any> = {}
         try {
@@ -291,7 +280,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           content: JSON.stringify(result),
         })
       }
+
+      // Дальше модель написала бы финальную фразу, которую экран не показывает.
+      // Это лишний полный round-trip к OpenRouter, а отправитель всё это время
+      // смотрит на крутящийся спиннер при уже готовом логе.
+      if (offersSent) break
     }
+
+    const { count } = await db
+      .from('offers')
+      .select('id', { count: 'exact', head: true })
+      .eq('order_id', orderId)
+    if (!count) return bail('Машину не подобрали', 'подходящих свободных машин нет')
 
     await db
       .from('orders')
@@ -301,8 +301,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ ok: true, log, patch })
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
-    log.push({ at: now(), text: 'Агент прервался', detail: message, state: 'wait' })
-    await db.from('orders').update({ status: 'draft', agent_log: log }).eq('id', orderId)
-    return res.status(500).json({ error: message, log })
+    return bail('Агент прервался', message, 500)
   }
 }
