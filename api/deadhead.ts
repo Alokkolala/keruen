@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { db } from './_lib/db.js'
-import { routeBetween, type Point } from './_lib/tools.js'
+import { routeCached, type Point } from './_lib/tools.js'
 
 /**
  * Порожний пробег между плечами дня: от точки выгрузки одного рейса
@@ -24,7 +24,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const pa = points.get(a)
       const pb = points.get(b)
       if (!pa || !pb) return null
-      const r = await routeBetween(pa, pb)
+      const r = await routeCached(db, pa, pb)
       return r ? r.distance_km : null // null — честное «не посчитали», не подставляем число
     }),
   )

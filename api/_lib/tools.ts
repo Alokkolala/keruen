@@ -31,19 +31,34 @@ function consumptionFor(weightT: number) {
   return PRICING.litresPer100km[classOf(weightT)]
 }
 
+/**
+ * Сеть падает молча и по-разному: таймаут, обрыв, DNS. AbortSignal.timeout
+ * бросает, а не возвращает — и вызывающий код падал до своего try/catch,
+ * снова показывая пользователю вечный спиннер. Здесь единственное место,
+ * где это ловится: наружу уходит либо ответ, либо null.
+ */
+async function getJson<T>(url: string, init: RequestInit = {}, ms = 7000): Promise<T | null> {
+  try {
+    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(ms) })
+    if (!res.ok) return null
+    return (await res.json()) as T
+  } catch {
+    return null
+  }
+}
+
 /** Маршрут по реальной дорожной сети. Возвращает null, если OSRM не ответил. */
 export async function routeBetween(a: Point, b: Point) {
+  if (a.id && a.id === b.id) return { distance_km: 0, duration_min: 0, source: 'osrm' as const }
   const url =
     `https://router.project-osrm.org/route/v1/driving/` +
     `${a.lon},${a.lat};${b.lon},${b.lat}?overview=false&alternatives=false`
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
-  if (!res.ok) return null
-  const json = (await res.json()) as {
-    code: string
-    routes?: { distance: number; duration: number }[]
-  }
-  const r = json.routes?.[0]
-  if (json.code !== 'Ok' || !r) return null
+  // Публичный сервер OSRM режет запросы из датацентров: с Vercel он отвечает
+  // то за 7 секунд, то не отвечает вовсе. Одна повторная попытка.
+  let json = await getJson<{ code: string; routes?: { distance: number; duration: number }[] }>(url)
+  if (!json) json = await getJson(url)
+  const r = json?.routes?.[0]
+  if (json?.code !== 'Ok' || !r) return null
   return {
     distance_km: Math.round(r.distance / 100) / 10,
     duration_min: Math.round(r.duration / 60),
@@ -51,22 +66,60 @@ export async function routeBetween(a: Point, b: Point) {
   }
 }
 
+/**
+ * Тот же настоящий OSRM, но ответ сохраняется в базу и переиспользуется.
+ * Дорога между Актау и Шетпе не меняется между запросами, а публичный
+ * сервер OSRM — самое медленное и самое ненадёжное звено демо.
+ * Это кэш настоящих ответов, а не подставленное число: пока OSRM не
+ * ответил хотя бы раз, здесь тоже будет null.
+ */
+export async function routeCached(db: DbLike, a: Point, b: Point) {
+  if (!a.id || !b.id) return routeBetween(a, b)
+  if (a.id === b.id) return { distance_km: 0, duration_min: 0, source: 'osrm' as const }
+
+  const { data: hit } = await db
+    .from('route_cache')
+    .select('distance_km,duration_min')
+    .eq('from_id', a.id)
+    .eq('to_id', b.id)
+    .maybeSingle()
+  if (hit)
+    return {
+      distance_km: Number(hit.distance_km),
+      duration_min: Number(hit.duration_min),
+      source: 'osrm' as const,
+    }
+
+  const fresh = await routeBetween(a, b)
+  if (!fresh) return null
+  await db.from('route_cache').upsert({
+    from_id: a.id,
+    to_id: b.id,
+    distance_km: fresh.distance_km,
+    duration_min: fresh.duration_min,
+  })
+  return fresh
+}
+
+// Ровно тот кусочек Supabase-клиента, который нужен кэшу.
+type DbLike = {
+  from: (t: string) => any
+}
+
 /** Фактическая погода в точке. */
 export async function weatherAt(p: Point) {
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${p.lat}&longitude=${p.lon}` +
     `&current=temperature_2m,precipitation,wind_speed_10m,weather_code&timezone=auto`
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
-  if (!res.ok) return null
-  const json = (await res.json()) as {
+  const json = await getJson<{
     current?: {
       temperature_2m: number
       precipitation: number
       wind_speed_10m: number
       weather_code: number
     }
-  }
-  const c = json.current
+  }>(url)
+  const c = json?.current
   if (!c) return null
   return {
     temp_c: Math.round(c.temperature_2m),
@@ -140,12 +193,11 @@ export async function geocode(query: string, near?: Point) {
     params.set('viewbox', `${near.lon - d},${near.lat + d},${near.lon + d},${near.lat - d}`)
     params.set('bounded', '0')
   }
-  const res = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, {
-    headers: { 'User-Agent': 'keruen-hackathon/1.0 (contact: demo@keruen.kz)' },
-    signal: AbortSignal.timeout(8000),
-  })
-  if (!res.ok) return []
-  const json = (await res.json()) as { display_name: string; lat: string; lon: string }[]
+  const json = await getJson<{ display_name: string; lat: string; lon: string }[]>(
+    `https://nominatim.openstreetmap.org/search?${params}`,
+    { headers: { 'User-Agent': 'keruen-hackathon/1.0 (contact: demo@keruen.kz)' } },
+  )
+  if (!json) return []
   return json.map((r) => ({
     name: r.display_name,
     lat: Number(r.lat),
@@ -162,12 +214,11 @@ export async function reverseGeocode(lat: number, lon: number) {
     zoom: '18',
     'accept-language': 'ru',
   })
-  const res = await fetch(`https://nominatim.openstreetmap.org/reverse?${params}`, {
-    headers: { 'User-Agent': 'keruen-hackathon/1.0 (contact: demo@keruen.kz)' },
-    signal: AbortSignal.timeout(8000),
-  })
-  if (!res.ok) return null
-  const json = (await res.json()) as { display_name?: string; address?: Record<string, string> }
+  const json = await getJson<{ display_name?: string; address?: Record<string, string> }>(
+    `https://nominatim.openstreetmap.org/reverse?${params}`,
+    { headers: { 'User-Agent': 'keruen-hackathon/1.0 (contact: demo@keruen.kz)' } },
+  )
+  if (!json) return null
   const a = json.address ?? {}
   // display_name тянет всю страну с индексом — для карточки заказа берём короткое.
   const short = [a.road && [a.road, a.house_number].filter(Boolean).join(' '), a.suburb ?? a.neighbourhood]

@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { db } from './_lib/db.js'
-import { routeBetween, priceRange, type Point } from './_lib/tools.js'
+import { routeCached, priceRange, type Point } from './_lib/tools.js'
 
 // Открытые заявки, из которых агент собирает цепочку.
 // Каждая начинается там, где заканчивается предыдущая — так рейсы стыкуются.
@@ -24,7 +24,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   for (const o of OPEN) {
     const a = points.get(o.from_id)
     const b = points.get(o.to_id)
-    const leg = a && b ? await routeBetween(a, b) : null
+    const leg = a && b ? await routeCached(db, a, b) : null
     const price = leg ? priceRange(leg.distance_km, o.weight_t, o.loaders) : null
     rows.push({
       ...o,

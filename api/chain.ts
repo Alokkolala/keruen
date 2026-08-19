@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { db } from './_lib/db.js'
-import { routeBetween, priceRange, type Point } from './_lib/tools.js'
+import { routeCached, priceRange, type Point } from './_lib/tools.js'
 
 // Буфер на выгрузку. Стыковка валидна, если машина успевает доехать
 // от точки выгрузки до следующей погрузки с этим запасом.
@@ -34,7 +34,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Где и когда машина освободится.
   const freeAtId: string = order.to_id
   const freeAt = points.get(freeAtId)
-  const startMs = new Date(order.created_at).getTime()
+  // Отсчёт от «сейчас»: перевозчик только что взял рейс и выезжает.
+  // От created_at выходило время создания заявки — на демо это давало
+  // «освободится» в прошлом.
+  const startMs = new Date(order.started_at ?? Date.now()).getTime()
   const freeFromMs = startMs + (order.duration_min ?? 0) * 60_000 + UNLOAD_BUFFER_MIN * 60_000
 
   await db
@@ -66,10 +69,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Порожний подход равен нулю: машина уже стоит в точке погрузки.
   // Именно это мы и убираем — иначе она поехала бы домой пустой.
-  const back = await routeBetween(freeAt, points.get(carrier.base_id ?? '') ?? freeAt)
+  const back = await routeCached(db, freeAt, points.get(carrier.base_id ?? '') ?? freeAt)
   const emptyAvoided = back?.distance_km ?? 0
 
-  const leg = await routeBetween(freeAt, nextTo)
+  const leg = await routeCached(db, freeAt, nextTo)
   if (!leg) return res.status(200).json({ chained: false, reason: 'OSRM не ответил' })
 
   const price = priceRange(leg.distance_km, next.weight_t ?? 1, next.loaders ?? 0)

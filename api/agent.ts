@@ -1,11 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { db } from './_lib/db.js'
 import {
-  routeBetween,
+  routeCached,
   weatherAt,
   priceRange,
   requirementsFor,
-  emptyKmSaved,
   type Point,
 } from './_lib/tools.js'
 
@@ -110,7 +109,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let offersSent = false
 
   // --- Маршрут и погода одновременно: друг от друга они не зависят.
-  const [route, weather] = await Promise.all([routeBetween(from, to), weatherAt(from)])
+  const [route, weather] = await Promise.all([routeCached(db, from, to), weatherAt(from)])
 
   if (!route) return bail('Маршрут не рассчитан', 'OSRM не ответил, попробуйте ещё раз')
 
@@ -191,9 +190,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           })),
         )
 
-        // Экономия порожних: обратное плечо, которое теперь не пустое.
-        const saved = await emptyKmSaved(from!, from!, to!)
-        if (saved) patch.empty_km = saved.saved_km
+        // Экономия порожних — это гружёное плечо, которое машина иначе
+        // проехала бы обратно пустой. Оно уже посчитано выше, второй
+        // запрос к OSRM за тем же числом только тормозил бы.
+        patch.empty_km = route.distance_km
 
         const names = lastCarriers
           .filter((c) => ids.includes(c.id))
