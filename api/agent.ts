@@ -104,6 +104,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const to = points.get(order.to_id ?? '')
   if (!from || !to) return bail('Не знаю точки маршрута', 'проверьте «откуда» и «куда»', 400)
 
+  // Замеры едут в ответе, но не в лог пользователю: нужны, чтобы видеть,
+  // что тормозит — свои инструменты или модель.
+  const t0 = Date.now()
+  const timings: Record<string, number> = {}
+
   const patch: Record<string, unknown> = {}
   let lastCarriers: { id: string; name: string; vehicle: string }[] = []
   let offersSent = false
@@ -111,6 +116,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // --- Маршрут и погода одновременно: друг от друга они не зависят.
   const [route, weather] = await Promise.all([routeCached(db, from, to), weatherAt(from)])
 
+  timings.tools_ms = Date.now() - t0
   if (!route) return bail('Маршрут не рассчитан', 'OSRM не ответил, попробуйте ещё раз')
 
   patch.distance_km = route.distance_km
@@ -215,6 +221,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ? new Date(order.deadline).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })
     : null
 
+  timings.before_model_ms = Date.now() - t0
+
   const messages: any[] = [
     { role: 'system', content: SYSTEM },
     {
@@ -253,6 +261,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const body = await r.text()
         throw new Error(`OpenRouter ${r.status}: ${body.slice(0, 300)}`)
       }
+      timings[`model_${step}_ms`] = Date.now() - t0 - (timings.before_model_ms ?? 0)
       const json = (await r.json()) as any
       const msg = json.choices?.[0]?.message
       if (!msg) throw new Error('Пустой ответ модели')
@@ -298,7 +307,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .update({ ...patch, status: 'negotiating', agent_log: log })
       .eq('id', orderId)
 
-    return res.status(200).json({ ok: true, log, patch })
+    timings.total_ms = Date.now() - t0
+    return res.status(200).json({ ok: true, log, patch, timings })
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
     return bail('Агент прервался', message, 500)
