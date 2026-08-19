@@ -8,21 +8,27 @@ export interface Point {
   lon: number
 }
 
-// keruen: калибровочные константы. Дизель и расход меняются — держим в одном месте.
+// keruen: калибровочные константы. Проверять раз в сезон — дизель и ставки плывут.
+// Ставка за километр — основа цены, топливо лишь показывается отправителю
+// как составляющая. Считать цену от одного топлива нельзя: на межгороде
+// оно около 12% рейса, остальное водитель, амортизация и маржа.
 export const PRICING = {
   dieselPerLitre: 295, // ₸/л, Мангистау
   litresPer100km: { light: 14, medium: 25, heavy: 34 }, // до 3т / до 8т / выше
-  // Топливо — примерно 40% себестоимости рейса: остальное водитель,
-  // амортизация и маржа. Отсюда множитель.
-  costMultiplier: 2.5,
+  ratePerKm: { light: 260, medium: 330, heavy: 450 }, // ₸/км по классам
+  minFare: 15000, // подача на короткое плечо
   spread: { min: 0.92, max: 1.12 },
   loaderFee: 2000, // ₸ за грузчика
 }
 
+function classOf(weightT: number): 'light' | 'medium' | 'heavy' {
+  if (weightT <= 3) return 'light'
+  if (weightT <= 8) return 'medium'
+  return 'heavy'
+}
+
 function consumptionFor(weightT: number) {
-  if (weightT <= 3) return PRICING.litresPer100km.light
-  if (weightT <= 8) return PRICING.litresPer100km.medium
-  return PRICING.litresPer100km.heavy
+  return PRICING.litresPer100km[classOf(weightT)]
 }
 
 /** Маршрут по реальной дорожной сети. Возвращает null, если OSRM не ответил. */
@@ -106,11 +112,13 @@ export function requirementsFor(cargo: string, weather: { temp_c: number; precip
   return { body, notes: req }
 }
 
-/** Справедливая вилка цены. Считается от километров и топлива, а не с потолка. */
+/** Справедливая вилка цены: ставка за км по классу машины, не с потолка. */
 export function priceRange(distanceKm: number, weightT: number, loaders = 0) {
   const litres = (distanceKm * consumptionFor(weightT)) / 100
   const fuel = Math.round(litres * PRICING.dieselPerLitre)
-  const base = fuel * PRICING.costMultiplier + loaders * PRICING.loaderFee
+  const base =
+    Math.max(distanceKm * PRICING.ratePerKm[classOf(weightT)], PRICING.minFare) +
+    loaders * PRICING.loaderFee
   return {
     fuel_cost: fuel,
     litres: Math.round(litres),

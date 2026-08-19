@@ -116,6 +116,10 @@ export async function acceptOffer(offer: Offer) {
     .from('orders')
     .update({ status: 'assigned', carrier_id: offer.carrier_id, price_final: offer.price })
     .eq('id', offer.order_id)
+
+  // Машина ещё даже не выехала, а агент уже ищет ей груз из точки выгрузки.
+  // Не ждём ответа: цепочка догрузится сама и прилетит через realtime.
+  api('chain', { orderId: offer.order_id }).catch(() => {})
 }
 
 export async function counterOffer(offer: Offer, price: number) {

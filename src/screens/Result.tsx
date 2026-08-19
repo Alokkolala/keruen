@@ -82,9 +82,13 @@ export default function Result() {
       ) : null}
 
       <Button onClick={confirm}>Подтвердить</Button>
-      <Button variant="ghost" onClick={() => nav(`/track/${order.id}`)}>
+      <a
+        href="tel:+77000000000"
+        className="bg-gray-btn text-ink flex items-center justify-center gap-2 rounded-[18px] px-4 py-3.5 text-[15px] font-medium"
+      >
+        <Icon name="phone" size={16} />
         Связаться с водителем
-      </Button>
+      </a>
 
       <TabBar role="shipper" />
     </div>
