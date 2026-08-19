@@ -27,3 +27,5 @@ dist-ssr
 .env*.local
 .vercel
 .supabase-db-password
+.vercel
+.env*

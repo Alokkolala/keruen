@@ -1,10 +1,10 @@
 import { Link, useNavigate } from 'react-router-dom'
-import { Header, TabBar, Chip, money } from '../ui/Shell'
+import { Header, TabBar, Chip, CardSkeleton, Empty, Num, money } from '../ui/Shell'
 import { Icon } from '../ui/Icon'
 import { useOrders, usePoints } from '../lib/data'
 import type { Order } from '../lib/types'
 
-const STATUS: Record<string, { label: string; tone: 'yellow' | 'green' | 'plain' }> = {
+const STATUS: Record<string, { label: string; tone: 'yellow' | 'green' | 'plain' | 'alert' }> = {
   draft: { label: 'Черновик', tone: 'plain' },
   searching: { label: 'Ищем', tone: 'yellow' },
   negotiating: { label: 'Согласовываем', tone: 'yellow' },
@@ -25,7 +25,7 @@ const NEXT_ROUTE: Record<string, (o: Order) => string> = {
 
 export default function Home() {
   const nav = useNavigate()
-  const orders = useOrders()
+  const { orders, loading } = useOrders()
   const points = usePoints()
   const active = orders.filter((o) => !['done', 'cancelled'].includes(o.status)).slice(0, 4)
   const savedKm = orders.reduce((s, o) => s + (o.empty_km ?? 0), 0)
@@ -35,7 +35,7 @@ export default function Home() {
       <Header />
 
       <section className="card flex items-center gap-3 p-5">
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           <h1 className="text-[22px] leading-[27px] font-bold">
             Отправляйте
             <br />
@@ -47,29 +47,41 @@ export default function Home() {
             Опишите задачу — агент найдёт перевозчика, рассчитает цену и запустит поиск.
           </p>
           <button
-            onClick={() => nav('/new')}
-            className="bg-yellow text-ink mt-4 flex items-center gap-2.5 rounded-full px-[18px] py-3.5 text-[14.5px] font-bold shadow-[0_4px_10px_rgb(0_0_0/0.16)]"
+            onClick={() => nav('/new', { viewTransition: true })}
+            className="bg-yellow text-ink mt-4 flex items-center gap-2.5 rounded-full px-[18px] py-3.5 text-[14.5px] font-bold shadow-[0_4px_10px_rgb(0_0_0/0.16)] transition-transform active:scale-[0.97]"
           >
             <Icon name="cube" size={16} />
             Создать заказ
           </button>
         </div>
-        <img src="/assets/ill-truck-boxes.png" alt="" className="h-[176px] w-[150px] object-contain" />
+        <img
+          src="/assets/ill-truck-boxes.png"
+          alt=""
+          className="h-[176px] w-[136px] shrink-0 object-contain"
+        />
       </section>
 
       <div className="flex items-center gap-2.5">
-        <Icon name="cube" size={20} className="text-yellow-ink" />
-        <h2 className="flex-1 text-[17px] font-bold">Активные заказы</h2>
-        <Link to="/orders" className="bg-card flex items-center gap-1.5 rounded-full px-3 py-2 text-[12.5px] font-medium">
+        <Icon name="cube" size={20} className="text-yellow-ink shrink-0" />
+        <h2 className="min-w-0 flex-1 truncate text-[17px] font-bold">Активные заказы</h2>
+        <Link
+          to="/orders"
+          viewTransition
+          className="bg-card flex shrink-0 items-center gap-1.5 rounded-full px-3 py-2 text-[12.5px] font-medium"
+        >
           Смотреть все
           <Icon name="next" size={12} />
         </Link>
       </div>
 
-      {active.length === 0 && (
-        <p className="text-muted px-1 text-[13px]">
-          Пока пусто. Нажмите «Создать заказ» и скажите, что нужно везти.
-        </p>
+      {loading && <CardSkeleton rows={2} />}
+
+      {!loading && active.length === 0 && (
+        <Empty
+          art="/assets/ill-pin-path.png"
+          title="Пока ни одного заказа"
+          hint="Нажмите «Создать заказ» и просто скажите, что нужно везти — остальное посчитает агент."
+        />
       )}
 
       {active.map((o, i) => {
@@ -77,8 +89,8 @@ export default function Home() {
         return (
           <button
             key={o.id}
-            onClick={() => nav(NEXT_ROUTE[o.status]?.(o) ?? `/working/${o.id}`)}
-            className="card rise flex items-center gap-3 p-3.5 text-left"
+            onClick={() => nav(NEXT_ROUTE[o.status]?.(o) ?? `/working/${o.id}`, { viewTransition: true })}
+            className="card rise flex items-center gap-3 p-3.5 text-left transition-transform active:scale-[0.99]"
             style={{ animationDelay: `${i * 60}ms` }}
           >
             <img
@@ -89,7 +101,7 @@ export default function Home() {
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 text-[14.5px] font-bold">
                 <span className="truncate">{points.get(o.from_id ?? '')?.name ?? '—'}</span>
-                <span className="text-yellow-ink">→</span>
+                <span className="text-yellow-ink shrink-0">→</span>
                 <span className="truncate">{points.get(o.to_id ?? '')?.name ?? '—'}</span>
               </div>
               <p className="text-muted mt-0.5 truncate text-[11.5px]">
@@ -117,10 +129,10 @@ export default function Home() {
       })}
 
       {savedKm > 0 && (
-        <section className="bg-chip-g flex items-center gap-2.5 rounded-[18px] p-3.5">
-          <Icon name="leaf" size={16} className="text-green-ink" />
-          <span className="tnum text-green-ink text-[15px] font-bold">{Math.round(savedKm)} км</span>
-          <span className="text-green-ink text-[12px]">порожних убрано</span>
+        <section className="bg-chip-g rise flex items-center gap-2.5 rounded-[18px] p-3.5">
+          <Icon name="leaf" size={16} className="text-green-ink shrink-0" />
+          <Num value={savedKm} className="text-green-ink text-[15px] font-bold" />
+          <span className="text-green-ink text-[12px]">км порожних убрано</span>
         </section>
       )}
 

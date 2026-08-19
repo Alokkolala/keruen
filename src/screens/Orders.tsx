@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Header, TabBar, Chip, money } from '../ui/Shell'
+import { Header, TabBar, Chip, CardSkeleton, Empty, Button, money } from '../ui/Shell'
 import { useOrders, usePoints } from '../lib/data'
 import type { OrderStatus } from '../lib/types'
 
@@ -9,7 +9,7 @@ const STAGE_LABEL = ['Поиск', 'Согласование', 'В пути', '�
 
 export default function Orders() {
   const nav = useNavigate()
-  const orders = useOrders()
+  const { orders, loading } = useOrders()
   const points = usePoints()
   const [tab, setTab] = useState<'active' | 'done'>('active')
 
@@ -27,7 +27,7 @@ export default function Orders() {
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`flex-1 rounded-[15px] py-2.5 text-[14px] ${
+            className={`flex-1 rounded-[15px] py-2.5 text-[14px] transition-colors ${
               tab === t ? 'bg-card font-bold shadow-[0_2px_8px_rgb(0_0_0/0.06)]' : 'text-muted'
             }`}
           >
@@ -36,7 +36,24 @@ export default function Orders() {
         ))}
       </div>
 
-      {list.length === 0 && <p className="text-muted px-1 text-[13px]">Здесь пока пусто.</p>}
+      {loading && <CardSkeleton rows={3} />}
+
+      {!loading &&
+        list.length === 0 &&
+        (tab === 'active' ? (
+          <Empty
+            art="/assets/ill-handcart.png"
+            title="Активных заказов нет"
+            hint="Создайте заказ — здесь будет видно, на каком он шаге: поиск, согласование, в пути."
+            action={<Button onClick={() => nav('/new', { viewTransition: true })}>Создать заказ</Button>}
+          />
+        ) : (
+          <Empty
+            art="/assets/ill-route-done.png"
+            title="Завершённых пока нет"
+            hint="Доставленные и отменённые заказы соберутся здесь — вместе с итоговой ценой."
+          />
+        ))}
 
       {list.map((o, i) => {
         const stage = Math.max(0, STAGES.indexOf(o.status as OrderStatus))
@@ -45,7 +62,11 @@ export default function Orders() {
         return (
           <section
             key={o.id}
-            onClick={() => nav(o.status === 'in_transit' || finished ? `/track/${o.id}` : `/working/${o.id}`)}
+            onClick={() =>
+              nav(o.status === 'in_transit' || finished ? `/track/${o.id}` : `/working/${o.id}`, {
+                viewTransition: true,
+              })
+            }
             className="card rise p-3.5"
             style={{ animationDelay: `${i * 60}ms` }}
           >
@@ -58,21 +79,31 @@ export default function Orders() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 text-[14.5px] font-bold">
                   <span className="truncate">{points.get(o.from_id ?? '')?.name}</span>
-                  <span className="text-yellow-ink">→</span>
+                  <span className="text-yellow-ink shrink-0">→</span>
                   <span className="truncate">{points.get(o.to_id ?? '')?.name}</span>
                 </div>
                 <p className="text-muted truncate text-[11.5px]">
                   {o.weight_t} т {o.cargo}
                 </p>
                 <div className="mt-1">
-                  <Chip tone={finished ? 'green' : 'yellow'}>
-                    {finished ? 'Доставлен' : o.status === 'in_transit' ? 'В пути' : 'Ищем перевозчика'}
+                  <Chip tone={o.status === 'cancelled' ? 'plain' : finished ? 'green' : 'yellow'}>
+                    {o.status === 'cancelled'
+                      ? 'Отменён'
+                      : finished
+                        ? 'Доставлен'
+                        : o.status === 'in_transit'
+                          ? 'В пути'
+                          : 'Ищем перевозчика'}
                   </Chip>
                 </div>
               </div>
               <div className="shrink-0 text-right">
                 <div className="tnum text-[14px] font-bold">
-                  {o.price_final ? money(o.price_final) : o.price_min ? `${Math.round(o.price_min / 1000)}–${Math.round((o.price_max ?? 0) / 1000)} тыс` : '—'}
+                  {o.price_final
+                    ? money(o.price_final)
+                    : o.price_min
+                      ? `${Math.round(o.price_min / 1000)}–${Math.round((o.price_max ?? 0) / 1000)} тыс`
+                      : '—'}
                 </div>
                 <div className="text-muted text-[10.5px]">{o.distance_km ? `${o.distance_km} км` : ''}</div>
               </div>
@@ -86,7 +117,13 @@ export default function Orders() {
                       s < stage ? accent : s === stage ? `${accent} ring-2 ring-white` : 'bg-line'
                     }`}
                   />
-                  {s < 3 && <span className={`h-0.5 flex-1 ${s < stage ? accent : 'bg-line'}`} />}
+                  {s < 3 && (
+                    <span
+                      className={`h-0.5 flex-1 origin-left transition-transform duration-500 ${
+                        s < stage ? accent : 'bg-line'
+                      }`}
+                    />
+                  )}
                 </div>
               ))}
             </div>

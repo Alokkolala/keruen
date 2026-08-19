@@ -67,6 +67,8 @@ export interface Order {
   agent_log: AgentStep[]
   carrier_id: string | null
   empty_km: number | null
+  /** Момент, когда отправитель подтвердил погрузку. От него считается ETA. */
+  started_at: string | null
   created_at: string
 }
 

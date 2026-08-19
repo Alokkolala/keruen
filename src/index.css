@@ -13,6 +13,8 @@
   --color-green: #4aa547;
   --color-green-ink: #2e7a38;
   --color-gray-btn: #e5e3e1;
+  --color-alert: #c0392b;
+  --color-chip-r: #f7e2df;
 
   --font-sans: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
@@ -37,14 +39,15 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* мобильный экран: контент скроллится, таббар прижат */
+/* мобильный экран: контент скроллится, таббар прижат.
+   Нижний отступ — под плавающий таббар, иначе он накрывает последнюю карточку. */
 .screen {
   display: flex;
   flex-direction: column;
   min-height: 100%;
   max-width: 480px;
   margin: 0 auto;
-  padding: 18px 16px calc(16px + env(safe-area-inset-bottom));
+  padding: 18px 16px calc(12px + env(safe-area-inset-bottom));
   gap: 12px;
 }
 
@@ -53,6 +56,8 @@ body {
   border-radius: 22px;
   box-shadow: 0 4px 18px rgb(0 0 0 / 0.04);
 }
+
+/* ——— движение ——————————————————————————————————————— */
 
 @keyframes riseIn {
   from {
@@ -67,4 +72,128 @@ body {
 
 .rise {
   animation: riseIn 0.28s ease-out both;
+}
+
+/* строка лога, над которой агент работает прямо сейчас */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.breathe {
+  animation: breathe 1.4s ease-in-out infinite;
+}
+
+/* галочка, в которую «схлопывается» завершённый шаг */
+@keyframes pop {
+  0% {
+    transform: scale(0.2);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.pop {
+  animation: pop 0.32s cubic-bezier(0.3, 1.4, 0.5, 1) both;
+}
+
+/* перемычка «N км без груза» между плечами дня — прорисовывается сверху вниз */
+@keyframes drawDown {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+.draw-down {
+  transform-origin: top;
+  animation: drawDown 0.34s ease-out both;
+}
+
+/* скелетон вместо пустоты, пока грузятся данные */
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-line) 25%,
+    var(--color-card) 50%,
+    var(--color-line) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.3s linear infinite;
+  border-radius: 10px;
+}
+
+/* нативные переходы между экранами (View Transitions API) */
+@keyframes vtIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes vtOut {
+  to {
+    opacity: 0;
+  }
+}
+
+::view-transition-old(root) {
+  animation: vtOut 0.16s ease-in both;
+}
+
+::view-transition-new(root) {
+  animation: vtIn 0.24s ease-out both;
+}
+
+/* На телефоне ничего не должно дёргаться: у кого выключено движение —
+   у того статика, включая переходы между экранами. */
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .pop,
+  .breathe,
+  .draw-down,
+  .skeleton,
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none !important;
+  }
+}
+
+/* Leaflet: тайлы OSM, но рамка и шрифты — наши */
+.leaflet-container {
+  font-family: var(--font-sans);
+  background: var(--color-line);
+}
+
+.leaflet-control-attribution {
+  font-size: 9px;
+  background: rgb(252 251 249 / 0.8);
+}
+
+/* скруглённый угол карточки срезал копирайт OSM — отодвигаем от края */
+.leaflet-bottom.leaflet-right {
+  right: 8px;
+  bottom: 6px;
 }
