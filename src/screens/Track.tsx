@@ -1,6 +1,16 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Header, TabBar, TitleBar, Chip, Button, Failed, CardSkeleton, money } from '../ui/Shell'
+import {
+  Header,
+  TabBar,
+  TitleBar,
+  Chip,
+  Button,
+  Failed,
+  CardSkeleton,
+  money,
+  useRole,
+} from '../ui/Shell'
 import { Icon } from '../ui/Icon'
 import { useCarriers, useOrder, usePoints, fmtDuration } from '../lib/data'
 import { supabase } from '../lib/supabase'
@@ -11,6 +21,9 @@ export default function Track() {
   const order = useOrder(id)
   const points = usePoints()
   const carriers = useCarriers()
+  // На этот экран теперь заходят с обеих сторон: отправитель из результата
+  // и перевозчик из плана дня. Водителю незачем звонить самому себе.
+  const iAm = useRole() ?? 'shipper'
 
   // Минутная стрелка: «осталось» должно таять само, без перезагрузки.
   const [, tick] = useState(0)
@@ -24,7 +37,7 @@ export default function Track() {
       <div className="screen">
         <Header />
         <CardSkeleton rows={2} />
-        <TabBar role="shipper" />
+        <TabBar role={iAm} />
       </div>
     )
 
@@ -34,7 +47,7 @@ export default function Track() {
         <Header />
         <Failed title="Заказ не найден" detail="Возможно, демо-данные сбросили" />
         <Button onClick={() => nav('/')}>На главную</Button>
-        <TabBar role="shipper" />
+        <TabBar role={iAm} />
       </div>
     )
 
@@ -138,29 +151,57 @@ export default function Track() {
         ))}
       </section>
 
-      <div className="flex gap-2.5">
-        <a
-          href="tel:+77000000000"
-          className="card flex min-w-0 flex-1 items-center gap-2 px-3 py-3 text-[12.5px] font-medium"
-        >
-          <span className="bg-yellow flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px]">
-            <Icon name="phone" size={15} />
+      {iAm === 'carrier' ? (
+        // Водителю нужны не кнопки связи с самим собой, а куда подъезжать.
+        // Телефона отправителя в модели данных нет — выдумывать его не станем.
+        <section className="card p-3.5 text-[12.5px] leading-[17px]">
+          <p className="flex gap-2">
+            <Icon name="pin" size={14} className="text-yellow-ink mt-0.5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              <span className="text-muted">Погрузка: </span>
+              {order.from_address || from?.name || '—'}
+            </span>
+          </p>
+          <p className="mt-1.5 flex gap-2">
+            <Icon name="flag" size={14} className="text-yellow-ink mt-0.5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              <span className="text-muted">Выгрузка: </span>
+              {order.to_address || to?.name || '—'}
+            </span>
+          </p>
+          <p className="mt-1.5 flex gap-2">
+            <Icon name="cube" size={14} className="text-yellow-ink mt-0.5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              {order.cargo} · {order.weight_t} т
+              {order.loaders > 0 ? ` · грузчиков ${order.loaders}` : ''}
+            </span>
+          </p>
+        </section>
+      ) : (
+        <div className="flex gap-2.5">
+          <a
+            href="tel:+77000000000"
+            className="card flex min-w-0 flex-1 items-center gap-2 px-3 py-3 text-[12.5px] font-medium"
+          >
+            <span className="bg-yellow flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px]">
+              <Icon name="phone" size={15} />
+            </span>
+            <span className="truncate">Позвонить {carrier?.name ?? 'водителю'}</span>
+          </a>
+          <span className="card flex shrink-0 items-center gap-2 px-3 py-3 text-[12.5px] font-medium">
+            <span className="bg-yellow flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px]">
+              <Icon name="chat" size={15} />
+            </span>
+            Чат
           </span>
-          <span className="truncate">Позвонить {carrier?.name ?? 'водителю'}</span>
-        </a>
-        <span className="card flex shrink-0 items-center gap-2 px-3 py-3 text-[12.5px] font-medium">
-          <span className="bg-yellow flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px]">
-            <Icon name="chat" size={15} />
-          </span>
-          Чат
-        </span>
-      </div>
+        </div>
+      )}
 
       {!done && (
         <Button
           onClick={async () => {
             await supabase.from('orders').update({ status: 'done' }).eq('id', order.id)
-            nav('/orders', { viewTransition: true })
+            nav(iAm === 'carrier' ? '/day' : '/orders', { viewTransition: true })
           }}
         >
           Груз выгружен
@@ -169,7 +210,7 @@ export default function Track() {
 
       <p className="text-muted text-center text-[11px]">Цена сделки {money(order.price_final)}</p>
 
-      <TabBar role="shipper" />
+      <TabBar role={iAm} />
     </div>
   )
 }

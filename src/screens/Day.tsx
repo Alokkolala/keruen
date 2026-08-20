@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom'
 import { Header, TabBar, Chip, CardSkeleton, Empty, Num, money } from '../ui/Shell'
 import { Icon } from '../ui/Icon'
 import { useDeadhead, useMe, useOrders, usePoints } from '../lib/data'
@@ -34,6 +35,7 @@ function chainByRoute(list: Order[], baseId: string | null): Order[] {
 }
 
 export default function Day() {
+  const nav = useNavigate()
   const { orders, loading } = useOrders()
   const points = usePoints()
   const me = useMe()
@@ -158,8 +160,9 @@ export default function Day() {
               />
             </div>
           )}
-          <section
-            className="card rise flex items-center gap-2.5 p-3"
+          <button
+            onClick={() => nav(`/track/${o.id}`, { viewTransition: true })}
+            className="card rise flex w-full items-center gap-2.5 p-3 text-left transition-transform active:scale-[0.99]"
             style={{ animationDelay: `${i * 90}ms` }}
           >
             <span className="bg-yellow text-ink flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-[11.5px] font-bold">
@@ -191,7 +194,8 @@ export default function Day() {
                 </Chip>
               </div>
             </div>
-          </section>
+            <Icon name="next" size={14} className="text-muted shrink-0" />
+          </button>
         </div>
       ))}
 
