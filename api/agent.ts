@@ -97,6 +97,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   timings.tools_ms = Date.now() - t0
   if (!route) return bail('Маршрут не рассчитан', 'OSRM не ответил, попробуйте ещё раз')
 
+  // Сужение до non-null не переживает границу замыкания, а runTool ниже
+  // берёт километры. Фиксируем число здесь.
+  const loadedKm = route.distance_km
+
   patch.distance_km = route.distance_km
   patch.duration_min = route.duration_min
   await pushStep(
@@ -176,7 +180,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Экономия порожних — это гружёное плечо, которое машина иначе
         // проехала бы обратно пустой. Оно уже посчитано выше, второй
         // запрос к OSRM за тем же числом только тормозил бы.
-        patch.empty_km = route.distance_km
+        patch.empty_km = loadedKm
 
         const names = lastCarriers
           .filter((c) => ids.includes(c.id))
@@ -218,18 +222,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           : `Погода недоступна.\n`) +
         `Рекомендованный кузов: ${chosenBody} (${need.notes[0]}).\n` +
         `Справедливая вилка: ${price.min}–${price.max} ₸.\n` +
-        `Свободные машины:
-` +
+        `Свободные машины:\n` +
         candidates
           .map(
             (c: any) =>
               `- id ${c.id}: ${c.name}, ${c.vehicle}, кузов ${c.body}, ` +
               `до ${c.capacity_t} т, рейтинг ${c.rating}`,
           )
-          .join('
-') +
-        `
-Вызови make_offers.`,
+          .join(`\n`) +
+        `\nВызови make_offers.`,
     },
   ]
 
