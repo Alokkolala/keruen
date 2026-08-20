@@ -296,11 +296,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (offersSent) break
     }
 
-    const { count } = await db
-      .from('offers')
-      .select('id', { count: 'exact', head: true })
-      .eq('order_id', orderId)
-    if (!count) return bail('Машину не подобрали', 'подходящих свободных машин нет')
+    // Флаг уже есть — лишний запрос к базе через океан тут ни к чему.
+    if (!offersSent) return bail('Машину не подобрали', 'подходящих свободных машин нет')
 
     await db
       .from('orders')
