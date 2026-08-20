@@ -141,6 +141,78 @@ export function ButtonRow({ children }: { children: React.ReactNode }) {
   return <div className="grid grid-cols-2 gap-2.5">{children}</div>
 }
 
+/**
+ * Удаление в два шага. Нативный confirm() в мобильных вебвью выглядит чужеродно
+ * и на iOS иногда просто не показывается — поэтому подтверждение живёт в самой
+ * карточке: первый тап раскрывает вопрос, второй удаляет.
+ */
+export function DeleteButton({
+  onDelete,
+  label = 'Удалить',
+}: {
+  onDelete: () => void | Promise<void>
+  label?: string
+}) {
+  const [asking, setAsking] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  // Передумал — вопрос сам закрывается, чтобы не висел на экране.
+  useEffect(() => {
+    if (!asking) return
+    const t = setTimeout(() => setAsking(false), 4000)
+    return () => clearTimeout(t)
+  }, [asking])
+
+  const stop = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+  }
+
+  if (!asking)
+    return (
+      <button
+        aria-label={label}
+        onClick={(e) => {
+          stop(e)
+          setAsking(true)
+        }}
+        className="text-muted hover:text-alert -m-1.5 shrink-0 p-1.5 transition-colors"
+      >
+        <Icon name="trash" size={16} />
+      </button>
+    )
+
+  return (
+    <div className="pop flex shrink-0 items-center gap-1.5">
+      <button
+        disabled={busy}
+        onClick={async (e) => {
+          stop(e)
+          setBusy(true)
+          try {
+            await onDelete()
+          } finally {
+            setBusy(false)
+          }
+        }}
+        className="bg-alert rounded-full px-3 py-1.5 text-[11.5px] font-bold text-white disabled:opacity-50"
+      >
+        {busy ? '…' : label}
+      </button>
+      <button
+        onClick={(e) => {
+          stop(e)
+          setAsking(false)
+        }}
+        aria-label="Отмена"
+        className="text-muted -m-1 p-1"
+      >
+        <Icon name="x" size={15} />
+      </button>
+    </div>
+  )
+}
+
 export function money(n: number | null | undefined) {
   if (n == null) return '—'
   return `${Math.round(n).toLocaleString('ru-RU')} ₸`

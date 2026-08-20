@@ -14,6 +14,7 @@ import { Icon } from '../ui/Icon'
 import {
   acceptOffer,
   counterOffer,
+  declineOffer,
   useOffers,
   useOrders,
   usePoints,
@@ -229,6 +230,14 @@ function Actions({
           Своя цена
         </Button>
       </ButtonRow>
+      {/* Отказ — отдельной строкой и без акцента: это не равноценный
+          третий выбор, а способ убрать карточку с глаз. */}
+      <button
+        onClick={() => declineOffer(offer.id)}
+        className="text-muted hover:text-alert mt-2 w-full py-1.5 text-[12px] transition-colors"
+      >
+        Не подходит — убрать
+      </button>
     </div>
   )
 }

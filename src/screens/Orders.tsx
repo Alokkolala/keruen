@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Header, TabBar, Chip, CardSkeleton, Empty, Button, money } from '../ui/Shell'
-import { useOrders, usePoints } from '../lib/data'
+import { Header, TabBar, Chip, CardSkeleton, Empty, Button, DeleteButton, money } from '../ui/Shell'
+import { deleteOrder, useOrders, usePoints } from '../lib/data'
 import type { OrderStatus } from '../lib/types'
 
 const STAGES: OrderStatus[] = ['searching', 'negotiating', 'assigned', 'in_transit']
@@ -97,15 +97,20 @@ export default function Orders() {
                   </Chip>
                 </div>
               </div>
-              <div className="shrink-0 text-right">
-                <div className="tnum text-[14px] font-bold">
-                  {o.price_final
-                    ? money(o.price_final)
-                    : o.price_min
-                      ? `${Math.round(o.price_min / 1000)}–${Math.round((o.price_max ?? 0) / 1000)} тыс`
-                      : '—'}
+              <div className="flex shrink-0 items-center gap-2">
+                <div className="text-right">
+                  <div className="tnum text-[14px] font-bold">
+                    {o.price_final
+                      ? money(o.price_final)
+                      : o.price_min
+                        ? `${Math.round(o.price_min / 1000)}–${Math.round((o.price_max ?? 0) / 1000)} тыс`
+                        : '—'}
+                  </div>
+                  <div className="text-muted text-[10.5px]">
+                    {o.distance_km ? `${o.distance_km} км` : ''}
+                  </div>
                 </div>
-                <div className="text-muted text-[10.5px]">{o.distance_km ? `${o.distance_km} км` : ''}</div>
+                <DeleteButton onDelete={() => deleteOrder(o.id)} />
               </div>
             </div>
 

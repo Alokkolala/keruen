@@ -166,6 +166,32 @@ export async function counterOffer(offer: Offer, price: number) {
   await supabase.from('offers').update({ status: 'countered', counter: price }).eq('id', offer.id)
 }
 
+/**
+ * Удаление заказа. Плечи и предложения уходят каскадом — так описано в схеме,
+ * поэтому чистить их отдельно не нужно.
+ */
+export async function deleteOrder(id: string) {
+  const { error } = await supabase.from('orders').delete().eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+/** Снять предложение — перевозчик больше его не увидит. */
+export async function declineOffer(id: string) {
+  const { error } = await supabase.from('offers').update({ status: 'declined' }).eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+/**
+ * Полный сброс демо. Живых заказов нет, только показательные — поэтому
+ * сносим всё разом, а не выбираем по одному.
+ */
+export async function wipeOrders() {
+  const NIL = '00000000-0000-0000-0000-000000000000'
+  const { error } = await supabase.from('orders').delete().neq('id', NIL)
+  if (error) throw new Error(error.message)
+  await supabase.from('carriers').update({ free_from: null, free_at_id: null }).neq('id', NIL)
+}
+
 export function fmtDuration(min: number | null | undefined) {
   if (min == null) return '—'
   const h = Math.floor(min / 60)

@@ -1,5 +1,5 @@
 import type { Plugin, ViteDevServer } from 'vite'
-import { readdirSync, existsSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 /**
@@ -12,14 +12,17 @@ export function apiPlugin(): Plugin {
     configureServer(server: ViteDevServer) {
       const dir = resolve(process.cwd(), 'api')
       if (!existsSync(dir)) return
-      const routes = readdirSync(dir)
-        .filter((f) => f.endsWith('.ts') && !f.startsWith('_'))
-        .map((f) => f.replace(/\.ts$/, ''))
 
       server.middlewares.use(async (req, res, next) => {
         const url = new URL(req.url ?? '/', 'http://localhost')
-        const name = url.pathname.replace(/^\/api\//, '')
-        if (!url.pathname.startsWith('/api/') || !routes.includes(name)) return next()
+        if (!url.pathname.startsWith('/api/')) return next()
+
+        // Имя из адреса, а не из заранее прочитанного списка: раньше состав
+        // функций фиксировался при старте, и новый файл давал 404, пока
+        // сервер не перезапустят. Точки и слэши режем — путь в код не пускаем.
+        const name = url.pathname.slice('/api/'.length)
+        if (!/^[a-z0-9-]+$/i.test(name)) return next()
+        if (!existsSync(resolve(dir, `${name}.ts`))) return next()
 
         try {
           const mod = await server.ssrLoadModule(`/api/${name}.ts`)

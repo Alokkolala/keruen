@@ -28,6 +28,9 @@ const P: Record<string, string> = {
   weather: 'M8 16.5a4 4 0 1 1 .8-7.9A5 5 0 1 1 17 14M6 20h12',
   truck: 'M3 7h10v9H3zM13 10.5h4l3 3V16h-7zM7 19.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4M17 19.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4',
   info: 'M12 20.5a8.5 8.5 0 1 0 0-17 8.5 8.5 0 0 0 0 17M12 11v5.5M12 7.8v.2',
+  trash: 'M4.5 6.5h15M9.5 6.5V4.5h5v2M6.5 6.5l1 13a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1l1-13M10 10.5v6M14 10.5v6',
+  x: 'M6 6l12 12M18 6 6 18',
+  refresh: 'M20 12a8 8 0 1 1-2.4-5.7M20 4v5h-5',
 }
 
 export type IconName = keyof typeof P

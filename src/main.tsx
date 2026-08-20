@@ -14,6 +14,7 @@ import Carrier from './screens/Carrier'
 import Day from './screens/Day'
 import Role from './screens/Role'
 import Setup from './screens/Setup'
+import Demo from './screens/Demo'
 import { isConfigured } from './lib/supabase'
 import { useRole } from './ui/Shell'
 
@@ -50,6 +51,8 @@ const router = createBrowserRouter(
         { path: '/track/:id', element: <Track /> },
         { path: '/carrier', element: <Carrier /> },
         { path: '/day', element: <Day /> },
+        // Служебный: в навигации его нет, открывается только по адресу.
+        { path: '/demo', element: <Demo /> },
       ]
     : [{ path: '*', element: <Setup /> }],
 )
