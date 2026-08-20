@@ -9,7 +9,7 @@ import {
 } from './_lib/tools.js'
 
 const MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-oss-120b'
-const MAX_STEPS = 4 // keruen: жёсткий предел, чтобы агент не зациклился на демо
+const MAX_STEPS = 2 // keruen: инструмент один, второй заход — только если модель промахнулась
 
 // Маршрут, погоду и цену модель раньше добывала пятью последовательными
 // вызовами — пять полных round-trip к OpenRouter, отсюда полминуты ожидания.
@@ -17,36 +17,14 @@ const MAX_STEPS = 4 // keruen: жёсткий предел, чтобы аген�
 // Считаем их сами и параллельно, а модели оставляем то, где решение
 // действительно есть — кого позвать и по какой цене.
 const SYSTEM = `Ты — караван-баши KERUEN, логистический агент Мангистауской области.
-Маршрут, погода и справедливая вилка цены уже посчитаны и даны тебе в сообщении.
+Маршрут, погода, справедливая вилка цены и список свободных машин уже даны
+тебе в сообщении. Решение за тобой: кого из них позвать и по какой цене.
 
-Твоя работа:
-1. вызвать find_carriers, чтобы получить машины под этот груз;
-2. вызвать make_offers и позвать 2-3 лучших по цене внутри данной вилки.
-
-Правила:
-- Никогда не выдумывай цифры. Расстояние, погода и цена уже даны — бери их как есть.
-- Цена в make_offers обязана лежать внутри вилки.
-- Можешь вызвать оба инструмента сразу, одним ходом.
-- После make_offers сразу заверши работу коротким текстом на русском (одно предложение).
-- Не пиши длинных рассуждений — только вызовы инструментов и финальная фраза.`
+Вызови make_offers ровно один раз: 2-3 лучших перевозчика и цена внутри вилки.
+Выбирай по рейтингу, запасу по тоннажу и подходящему кузову.
+Никаких рассуждений — только вызов инструмента.`
 
 const TOOLS = [
-  {
-    type: 'function',
-    function: {
-      name: 'find_carriers',
-      description: 'Подходящие перевозчики: по тоннажу, типу кузова и близости к точке погрузки.',
-      parameters: {
-        type: 'object',
-        properties: {
-          near_point_id: { type: 'string' },
-          weight_t: { type: 'number' },
-          body: { type: 'string', description: 'тент | борт | реф' },
-        },
-        required: ['near_point_id', 'weight_t'],
-      },
-    },
-  },
   {
     type: 'function',
     function: {
@@ -152,32 +130,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Цифры уже в базе — отправитель видит их, пока модель ещё думает над машинами.
   await db.from('orders').update(patch).eq('id', orderId)
 
+  // --- Свободные машины. Это выборка из своей же таблицы по тоннажу и
+  // кузову — решения здесь нет, поэтому и спрашивать модель незачем.
+  // Каждый её вызов стоит 5-8 секунд ожидания; решение — кого позвать
+  // и почём — остаётся за ней и делается одним make_offers.
+  const { data: pool } = await db
+    .from('carriers')
+    .select('*')
+    .eq('online', true)
+    .gte('capacity_t', Number(order.weight_t) || 0)
+    .order('rating', { ascending: false })
+
+  const candidates = (pool ?? [])
+    .filter((c: any) => (chosenBody === 'реф' ? c.body === 'реф' : c.body !== 'реф'))
+    .slice(0, 4)
+
+  lastCarriers = candidates.map((c: any) => ({ id: c.id, name: c.name, vehicle: c.vehicle }))
+  await pushStep(
+    `Найдено подходящих машин — ${candidates.length}`,
+    `кузов ${chosenBody}, от ${order.weight_t} т`,
+  )
+  if (!candidates.length)
+    return bail('Машину не подобрали', `свободных машин под ${chosenBody} сейчас нет`)
+
   async function runTool(name: string, args: Record<string, any>): Promise<unknown> {
     switch (name) {
-      case 'find_carriers': {
-        const { data } = await db
-          .from('carriers')
-          .select('*')
-          .eq('online', true)
-          .gte('capacity_t', args.weight_t ?? order.weight_t ?? 0)
-        const body = args.body || chosenBody
-        const list = (data ?? [])
-          .filter((c: any) => (body === 'реф' ? c.body === 'реф' : c.body !== 'реф'))
-          .slice(0, 4)
-        lastCarriers = list.map((c: any) => ({ id: c.id, name: c.name, vehicle: c.vehicle }))
-        await pushStep(
-          `Найдено подходящих машин — ${list.length}`,
-          `кузов ${body}, от ${args.weight_t ?? order.weight_t} т`,
-        )
-        return list.map((c: any) => ({
-          id: c.id,
-          name: c.name,
-          vehicle: c.vehicle,
-          body: c.body,
-          capacity_t: c.capacity_t,
-          rating: c.rating,
-        }))
-      }
       case 'make_offers': {
         const ids: string[] = (args.carrier_ids ?? []).slice(0, 3)
         // Модель иногда съезжает с вилки — держим её в границах, цифры тут наши.
@@ -241,7 +218,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           : `Погода недоступна.\n`) +
         `Рекомендованный кузов: ${chosenBody} (${need.notes[0]}).\n` +
         `Справедливая вилка: ${price.min}–${price.max} ₸.\n` +
-        `Вызывай find_carriers и make_offers.`,
+        `Свободные машины:
+` +
+        candidates
+          .map(
+            (c: any) =>
+              `- id ${c.id}: ${c.name}, ${c.vehicle}, кузов ${c.body}, ` +
+              `до ${c.capacity_t} т, рейтинг ${c.rating}`,
+          )
+          .join('
+') +
+        `
+Вызови make_offers.`,
     },
   ]
 
@@ -254,7 +242,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           'Content-Type': 'application/json',
           'X-Title': 'KERUEN',
         },
-        body: JSON.stringify({ model: MODEL, messages, tools: TOOLS, temperature: 0.2 }),
+        body: JSON.stringify({
+          model: MODEL,
+          messages,
+          tools: TOOLS,
+          // Инструмент один и вызвать его обязательно — иначе модель
+          // иногда отвечает вежливым текстом вместо работы.
+          tool_choice: { type: 'function', function: { name: 'make_offers' } },
+          temperature: 0.2,
+        }),
         signal: AbortSignal.timeout(30000),
       })
       if (!r.ok) {
@@ -272,11 +268,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const calls = msg.tool_calls ?? []
       if (!calls.length) break
 
-      // Модель может позвать оба инструмента одним ходом — тогда порядок важен:
-      // find_carriers обязан отработать раньше make_offers.
-      calls.sort((a: any, b: any) =>
-        a.function.name === 'find_carriers' && b.function.name !== 'find_carriers' ? -1 : 0,
-      )
       for (const call of calls) {
         let args: Record<string, any> = {}
         try {
