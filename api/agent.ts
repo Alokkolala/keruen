@@ -173,7 +173,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             carrier_id: cid,
             price: offerPrice,
             status: 'sent',
-            reason: `кузов ${chosenBody}, цена в справедливой вилке`,
+            // Настоящая причина из requirementsFor, а не выбранный кузов:
+            // перевозчику с тентом писало «кузов борт», и это выглядело ошибкой.
+            reason: `${need.notes[0]}, цена в справедливой вилке`,
           })),
         )
 

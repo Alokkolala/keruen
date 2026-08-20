@@ -55,15 +55,37 @@ export function useCarriers() {
  * По умолчанию — первая машина в базе (Ерлан Т., та самая, что нарисована
  * в шапке). Логина в демо нет, поэтому выбор живёт в localStorage.
  */
+const meWatchers = new Set<() => void>()
+
+/** Сменить машину, под которой сидит перевозчик. Логина в демо нет. */
+export function setMyCarrier(id: string) {
+  localStorage.setItem('keruen:carrier', id)
+  meWatchers.forEach((fn) => fn())
+}
+
 export function useMe() {
   const [me, setMe] = useState<Carrier | null | undefined>(undefined)
+  const [bump, setBump] = useState(0)
+
+  useEffect(() => {
+    const fn = () => setBump((n) => n + 1)
+    meWatchers.add(fn)
+    return () => void meWatchers.delete(fn)
+  }, [])
+
   useEffect(() => {
     let alive = true
     const saved = localStorage.getItem('keruen:carrier')
     const q = supabase.from('carriers').select('*')
+    // created_at у засеянных машин одинаковый до миллисекунды — без второго
+    // ключа порядок произвольный, и «кто я» прыгал бы между загрузками.
     const one = saved
       ? q.eq('id', saved).maybeSingle()
-      : q.order('created_at', { ascending: true }).limit(1).maybeSingle()
+      : q
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .limit(1)
+          .maybeSingle()
     one.then(({ data }) => {
       if (!alive) return
       // Машину могли удалить или база пересоздана — тогда выбор протух.
@@ -73,7 +95,8 @@ export function useMe() {
     return () => {
       alive = false
     }
-  }, [])
+  }, [bump])
+
   return me
 }
 

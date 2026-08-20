@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from './Icon'
-import type { Point } from '../lib/types'
+import type { Carrier, Point } from '../lib/types'
 
 /** Нижняя шторка. Закрывается по фону и по Esc. */
 export function Sheet({
@@ -125,6 +125,71 @@ export function PointPicker({
             {value === p.id && <Icon name="check" size={16} className="text-green-ink shrink-0" />}
           </button>
         ))}
+      </div>
+    </Sheet>
+  )
+}
+
+/**
+ * Под какой машиной сидит перевозчик. Логина в демо нет, а агент зовёт
+ * на заказ 2-3 машины из четырёх — без этого выбора можно было открыть
+ * экран той, которую агент не позвал, и увидеть пустоту.
+ * Счётчик показывает, у кого сейчас есть предложения.
+ */
+export function CarrierPicker({
+  open,
+  carriers,
+  value,
+  offersBy,
+  onPick,
+  onClose,
+}: {
+  open: boolean
+  carriers: Carrier[]
+  value: string | null
+  offersBy: Map<string, number>
+  onPick: (id: string) => void
+  onClose: () => void
+}) {
+  return (
+    <Sheet open={open} title="Чья это машина" onClose={onClose}>
+      <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
+        {carriers.length === 0 && (
+          <p className="text-muted py-6 text-center text-[13px]">Машин в базе нет.</p>
+        )}
+        {carriers.map((c) => {
+          const n = offersBy.get(c.id) ?? 0
+          return (
+            <button
+              key={c.id}
+              onClick={() => {
+                onPick(c.id)
+                onClose()
+              }}
+              className="border-line flex w-full items-center gap-3 border-b py-3 text-left last:border-0"
+            >
+              <span
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
+                  value === c.id ? 'bg-yellow' : 'bg-bg'
+                }`}
+              >
+                {c.name.slice(0, 2)}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[15px] font-medium">{c.name}</span>
+                <span className="text-muted block truncate text-[11px]">
+                  {c.vehicle} · {c.capacity_t} т · {c.body} · ★ {c.rating}
+                </span>
+              </span>
+              {n > 0 && (
+                <span className="bg-chip-y shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold">
+                  {n}
+                </span>
+              )}
+              {value === c.id && <Icon name="check" size={16} className="text-green-ink shrink-0" />}
+            </button>
+          )
+        })}
       </div>
     </Sheet>
   )

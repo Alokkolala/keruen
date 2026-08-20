@@ -11,11 +11,14 @@ import {
   money,
 } from '../ui/Shell'
 import { Icon } from '../ui/Icon'
+import { CarrierPicker } from '../ui/Pickers'
 import {
   acceptOffer,
   counterOffer,
   declineOffer,
+  useCarriers,
   useMe,
+  setMyCarrier,
   useOffers,
   useOrders,
   usePoints,
@@ -28,7 +31,15 @@ export default function Carrier() {
   const { orders, loading } = useOrders()
   const points = usePoints()
   const me = useMe()
+  const carriers = useCarriers()
   const [busy, setBusy] = useState<string | null>(null)
+  const [switching, setSwitching] = useState(false)
+
+  // Сколько живых предложений у каждой машины — видно прямо в выборе.
+  const offersBy = new Map<string, number>()
+  for (const o of offers)
+    if (o.status === 'sent' || o.status === 'countered')
+      offersBy.set(o.carrier_id, (offersBy.get(o.carrier_id) ?? 0) + 1)
 
   // Агент отправляет один заказ 2-3 машинам, чтобы кто-то взял быстрее.
   // Экран перевозчика должен показывать только свои предложения — иначе
@@ -52,7 +63,10 @@ export default function Carrier() {
         Добрый день{firstName ? `, ${firstName}` : ''}
       </h1>
 
-      <section className="card flex items-center gap-3 p-3">
+      <button
+        onClick={() => setSwitching(true)}
+        className="card flex items-center gap-3 p-3 text-left transition-transform active:scale-[0.99]"
+      >
         <img
           src="/assets/truck-brand.png"
           alt=""
@@ -78,7 +92,8 @@ export default function Carrier() {
         <Chip tone="green" icon="check">
           На линии
         </Chip>
-      </section>
+        <Icon name="next" size={14} className="text-muted shrink-0" />
+      </button>
 
       {(loading || me === undefined) && <CardSkeleton rows={1} />}
 
@@ -167,6 +182,15 @@ export default function Carrier() {
           </section>
         )
       })}
+
+      <CarrierPicker
+        open={switching}
+        carriers={carriers}
+        value={me?.id ?? null}
+        offersBy={offersBy}
+        onPick={setMyCarrier}
+        onClose={() => setSwitching(false)}
+      />
 
       <TabBar role="carrier" />
     </div>
