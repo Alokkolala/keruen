@@ -261,8 +261,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const body = await r.text()
         throw new Error(`OpenRouter ${r.status}: ${body.slice(0, 300)}`)
       }
-      timings[`model_${step}_ms`] = Date.now() - t0 - (timings.before_model_ms ?? 0)
+      // Замер после чтения тела: fetch резолвится на заголовках, а модель
+      // дописывает ответ дольше — иначе цифра врёт в разы.
       const json = (await r.json()) as any
+      timings[`model_${step}_ms`] = Date.now() - t0 - (timings.before_model_ms ?? 0)
       const msg = json.choices?.[0]?.message
       if (!msg) throw new Error('Пустой ответ модели')
       messages.push(msg)
