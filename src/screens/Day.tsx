@@ -1,6 +1,37 @@
 import { Header, TabBar, Chip, CardSkeleton, Empty, Num, money } from '../ui/Shell'
 import { Icon } from '../ui/Icon'
 import { useDeadhead, useMe, useOrders, usePoints } from '../lib/data'
+import type { Order } from '../lib/types'
+
+// keruen: калибровочные. Разгрузка — тот же буфер, что в api/chain.ts.
+// Скорость нужна только чтобы оценить порожний перегон между плечами:
+// OSRM даёт километры, а времени по ним мы отдельно не спрашиваем.
+const UNLOAD_MIN = 30
+const AVG_KMH = 70
+
+/**
+ * Выстраивает рейсы в порядке движения: от базы машины идём по цепочке,
+ * где выгрузка одного плеча совпадает с погрузкой следующего. Что не
+ * состыковалось — дописываем по времени создания, чтобы ничего не потерять.
+ */
+function chainByRoute(list: Order[], baseId: string | null): Order[] {
+  const left = [...list].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+  )
+  const out: Order[] = []
+  let at = baseId
+
+  while (left.length) {
+    // Сначала плечо, которое начинается там, где машина стоит сейчас.
+    let i = at ? left.findIndex((o) => o.from_id === at) : -1
+    // Стыковки нет — начинаем новую нитку с самого раннего оставшегося.
+    if (i < 0) i = 0
+    const [next] = left.splice(i, 1)
+    out.push(next)
+    at = next.to_id
+  }
+  return out
+}
 
 export default function Day() {
   const { orders, loading } = useOrders()
@@ -9,11 +40,15 @@ export default function Day() {
 
   // Мой день — это мои рейсы. Без фильтра по машине сюда попадали заказы,
   // которые взял кто-то другой, и доход считался чужой.
-  const plan = orders
+  const mine = orders
     .filter((o) => ['assigned', 'in_transit', 'done'].includes(o.status))
     .filter((o) => !me || o.carrier_id === me.id)
-    .slice()
-    .reverse()
+
+  // Порядок плеч — по маршруту, а не по времени создания записи. Заявка,
+  // которую агент подцепил в цепочку, лежит в базе с более раннего момента,
+  // чем свежий заказ отправителя, и сортировка по created_at показывала
+  // день задом наперёд: сначала обратное плечо, потом первое.
+  const plan = chainByRoute(mine, me?.base_id ?? null)
 
   const income = plan.reduce((s, o) => s + (o.price_final ?? 0), 0)
   const savedKm = plan.reduce((s, o) => s + (o.empty_km ?? 0), 0)
@@ -27,6 +62,20 @@ export default function Day() {
   const known = deadhead.filter((k): k is number => k != null)
   const emptyBetween = known.reduce((s, k) => s + k, 0)
   const pending = deadhead.length < pairs.length
+
+  // Время выезда каждого плеча. У выехавшего рейса оно настоящее (started_at),
+  // дальше складываем реальные длительности OSRM, порожний перегон и разгрузку.
+  // Раньше тут стоял created_at строки в базе — у подцепленной агентом заявки
+  // это момент, когда её кто-то завёл, к плану дня отношения не имеющий.
+  const starts = plan.reduce<(Date | null)[]>((acc, o, i) => {
+    if (o.started_at) return [...acc, new Date(o.started_at)]
+    const prev = acc[i - 1]
+    const prevOrder = plan[i - 1]
+    if (!prev || !prevOrder) return [...acc, new Date()]
+    const drive = (Number(prevOrder.duration_min) || 0) * 60_000
+    const empty = ((deadhead[i - 1] ?? 0) / AVG_KMH) * 3_600_000
+    return [...acc, new Date(prev.getTime() + drive + empty + UNLOAD_MIN * 60_000)]
+  }, [])
 
   return (
     <div className="screen">
@@ -118,10 +167,12 @@ export default function Day() {
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-muted text-[10.5px]">
-                {new Date(o.started_at ?? o.created_at).toLocaleTimeString('ru-RU', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
+                {starts[i]
+                  ? `${o.started_at ? '' : '≈ '}${starts[i]!.toLocaleTimeString('ru-RU', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}`
+                  : '—'}
               </p>
               <div className="flex items-center gap-1.5 text-[14px] font-bold">
                 <span className="truncate">{points.get(o.from_id ?? '')?.name}</span>
