@@ -15,6 +15,7 @@ import {
   acceptOffer,
   counterOffer,
   declineOffer,
+  useMe,
   useOffers,
   useOrders,
   usePoints,
@@ -26,14 +27,30 @@ export default function Carrier() {
   const offers = useOffers()
   const { orders, loading } = useOrders()
   const points = usePoints()
+  const me = useMe()
   const [busy, setBusy] = useState<string | null>(null)
 
-  const live = offers.filter((o) => o.status === 'sent' || o.status === 'countered')
+  // Агент отправляет один заказ 2-3 машинам, чтобы кто-то взял быстрее.
+  // Экран перевозчика должен показывать только свои предложения — иначе
+  // один заказ отправителя выглядит как несколько разных.
+  const seen = new Set<string>()
+  const live = offers.filter((o) => {
+    if (o.status !== 'sent' && o.status !== 'countered') return false
+    if (me && o.carrier_id !== me.id) return false
+    // Подстраховка от повторной рассылки того же заказа.
+    if (seen.has(o.order_id)) return false
+    seen.add(o.order_id)
+    return true
+  })
+
+  const firstName = me?.name?.split(' ')[0]
 
   return (
     <div className="screen">
       <Header />
-      <h1 className="text-[20px] font-bold">Добрый день, Ерлан</h1>
+      <h1 className="text-[20px] font-bold">
+        Добрый день{firstName ? `, ${firstName}` : ''}
+      </h1>
 
       <section className="card flex items-center gap-3 p-3">
         <img
@@ -42,17 +59,30 @@ export default function Carrier() {
           className="h-11 w-[72px] shrink-0 object-contain"
         />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[14px] font-bold">ГАЗель Next · 5 т · тент</p>
-          <p className="text-muted text-[12px]">Актау</p>
+          {me === undefined ? (
+            <>
+              <span className="skeleton block h-3.5 w-40" />
+              <span className="skeleton mt-1.5 block h-2.5 w-16" />
+            </>
+          ) : (
+            <>
+              <p className="truncate text-[14px] font-bold">
+                {me ? `${me.vehicle} · ${me.capacity_t} т · ${me.body}` : 'Машина не выбрана'}
+              </p>
+              <p className="text-muted text-[12px]">
+                {points.get(me?.base_id ?? '')?.name ?? '—'}
+              </p>
+            </>
+          )}
         </div>
         <Chip tone="green" icon="check">
           На линии
         </Chip>
       </section>
 
-      {loading && <CardSkeleton rows={1} />}
+      {(loading || me === undefined) && <CardSkeleton rows={1} />}
 
-      {!loading && live.length === 0 && (
+      {!loading && me !== undefined && live.length === 0 && (
         <Empty
           art="/assets/scene-road-truck.png"
           title="Пока предложений нет"

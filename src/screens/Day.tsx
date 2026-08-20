@@ -1,13 +1,17 @@
 import { Header, TabBar, Chip, CardSkeleton, Empty, Num, money } from '../ui/Shell'
 import { Icon } from '../ui/Icon'
-import { useDeadhead, useOrders, usePoints } from '../lib/data'
+import { useDeadhead, useMe, useOrders, usePoints } from '../lib/data'
 
 export default function Day() {
   const { orders, loading } = useOrders()
   const points = usePoints()
+  const me = useMe()
 
+  // Мой день — это мои рейсы. Без фильтра по машине сюда попадали заказы,
+  // которые взял кто-то другой, и доход считался чужой.
   const plan = orders
     .filter((o) => ['assigned', 'in_transit', 'done'].includes(o.status))
+    .filter((o) => !me || o.carrier_id === me.id)
     .slice()
     .reverse()
 

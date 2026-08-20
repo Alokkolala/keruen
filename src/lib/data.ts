@@ -48,6 +48,36 @@ export function useCarriers() {
 }
 
 /**
+ * Кто сидит за экраном перевозчика. Без этого /carrier показывал все
+ * предложения в системе: агент рассылает один заказ трём машинам, и
+ * отправитель видел свой единственный заказ тремя карточками.
+ *
+ * По умолчанию — первая машина в базе (Ерлан Т., та самая, что нарисована
+ * в шапке). Логина в демо нет, поэтому выбор живёт в localStorage.
+ */
+export function useMe() {
+  const [me, setMe] = useState<Carrier | null | undefined>(undefined)
+  useEffect(() => {
+    let alive = true
+    const saved = localStorage.getItem('keruen:carrier')
+    const q = supabase.from('carriers').select('*')
+    const one = saved
+      ? q.eq('id', saved).maybeSingle()
+      : q.order('created_at', { ascending: true }).limit(1).maybeSingle()
+    one.then(({ data }) => {
+      if (!alive) return
+      // Машину могли удалить или база пересоздана — тогда выбор протух.
+      if (!data && saved) localStorage.removeItem('keruen:carrier')
+      setMe((data as Carrier) ?? null)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
+  return me
+}
+
+/**
  * Один заказ с подпиской на изменения — на этом живёт лог агента.
  * undefined — ещё грузим (показываем скелетон), null — такого заказа нет.
  */
