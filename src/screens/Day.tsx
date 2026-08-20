@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
-import { Header, TabBar, Chip, CardSkeleton, Empty, Num, money } from '../ui/Shell'
+import { Header, TabBar, Chip, CardSkeleton, DeleteButton, Empty, Num, money } from '../ui/Shell'
 import { Icon } from '../ui/Icon'
-import { useDeadhead, useMe, useOrders, usePoints } from '../lib/data'
+import { releaseOrder, useDeadhead, useMe, useOrders, usePoints } from '../lib/data'
 import type { Order } from '../lib/types'
 
 // keruen: калибровочные. Разгрузка — тот же буфер, что в api/chain.ts.
@@ -160,42 +160,52 @@ export default function Day() {
               />
             </div>
           )}
-          <button
-            onClick={() => nav(`/track/${o.id}`, { viewTransition: true })}
-            className="card rise flex w-full items-center gap-2.5 p-3 text-left transition-transform active:scale-[0.99]"
+          {/* Карточка — не кнопка целиком: рядом живёт «отказаться»,
+              а кнопка внутри кнопки в разметке недопустима. */}
+          <section
+            className="card rise flex items-center gap-2.5 p-3"
             style={{ animationDelay: `${i * 90}ms` }}
           >
-            <span className="bg-yellow text-ink flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-[11.5px] font-bold">
-              {i + 1}
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-muted text-[10.5px]">
-                {starts[i]
-                  ? `${o.started_at ? '' : '≈ '}${starts[i]!.toLocaleTimeString('ru-RU', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}`
-                  : '—'}
-              </p>
-              <div className="flex items-center gap-1.5 text-[14px] font-bold">
-                <span className="truncate">{points.get(o.from_id ?? '')?.name}</span>
-                <span className="text-yellow-ink shrink-0">→</span>
-                <span className="truncate">{points.get(o.to_id ?? '')?.name}</span>
+            <button
+              onClick={() => nav(`/track/${o.id}`, { viewTransition: true })}
+              className="flex min-w-0 flex-1 items-center gap-2.5 text-left transition-transform active:scale-[0.99]"
+            >
+              <span className="bg-yellow text-ink flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-[11.5px] font-bold">
+                {i + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-muted text-[10.5px]">
+                  {starts[i]
+                    ? `${o.started_at ? '' : '≈ '}${starts[i]!.toLocaleTimeString('ru-RU', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}`
+                    : '—'}
+                </p>
+                <div className="flex items-center gap-1.5 text-[14px] font-bold">
+                  <span className="truncate">{points.get(o.from_id ?? '')?.name}</span>
+                  <span className="text-yellow-ink shrink-0">→</span>
+                  <span className="truncate">{points.get(o.to_id ?? '')?.name}</span>
+                </div>
+                <p className="text-muted truncate text-[10.5px]">
+                  {o.cargo} · {o.weight_t} т
+                </p>
               </div>
-              <p className="text-muted truncate text-[10.5px]">
-                {o.cargo} · {o.weight_t} т
-              </p>
-            </div>
-            <div className="shrink-0 text-right">
-              <p className="tnum text-[13.5px] font-bold">+{money(o.price_final)}</p>
-              <div className="mt-1">
-                <Chip tone="green" icon="check">
-                  {o.status === 'done' ? 'Доставлен' : o.status === 'in_transit' ? 'В пути' : 'Принят'}
-                </Chip>
+              <div className="shrink-0 text-right">
+                <p className="tnum text-[13.5px] font-bold">+{money(o.price_final)}</p>
+                <div className="mt-1">
+                  <Chip tone="green" icon="check">
+                    {o.status === 'done'
+                      ? 'Доставлен'
+                      : o.status === 'in_transit'
+                        ? 'В пути'
+                        : 'Принят'}
+                  </Chip>
+                </div>
               </div>
-            </div>
-            <Icon name="next" size={14} className="text-muted shrink-0" />
-          </button>
+            </button>
+            <DeleteButton onDelete={() => releaseOrder(o.id)} label="Отказаться" />
+          </section>
         </div>
       ))}
 

@@ -229,6 +229,21 @@ export async function deleteOrder(id: string) {
 }
 
 /** Снять предложение — перевозчик больше его не увидит. */
+/**
+ * Перевозчик отказывается от уже взятого рейса. Заказ не удаляется —
+ * он чужой, и у отправителя не должен исчезнуть. Возвращаем его в поиск,
+ * чтобы агент подобрал другую машину.
+ */
+export async function releaseOrder(orderId: string) {
+  const { error } = await supabase
+    .from('orders')
+    .update({ status: 'searching', carrier_id: null, price_final: null, started_at: null })
+    .eq('id', orderId)
+  if (error) throw new Error(error.message)
+  // Своё принятое предложение снимаем, иначе оно так и висит принятым.
+  await supabase.from('offers').update({ status: 'declined' }).eq('order_id', orderId)
+}
+
 export async function declineOffer(id: string) {
   const { error } = await supabase.from('offers').update({ status: 'declined' }).eq('id', id)
   if (error) throw new Error(error.message)
