@@ -17,8 +17,11 @@ import { createClient } from '@supabase/supabase-js'
 import { readFileSync, existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createServer } from 'node:http'
+import { spawn } from 'node:child_process'
 import wwebjs from 'whatsapp-web.js'
 import qrcodeTerminal from 'qrcode-terminal'
+import QRCode from 'qrcode'
 
 const { Client, LocalAuth } = wwebjs
 const here = dirname(fileURLToPath(import.meta.url))
@@ -48,10 +51,20 @@ const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: fal
 
 /* ——— WhatsApp ——————————————————————————————————————— */
 
+// whatsapp-web.js тянет свою версию WhatsApp Web, и она протухает: тогда
+// телефон отвечает «не удалось связать устройство». Закрепляем рабочую.
+// Список живых версий: raw.githubusercontent.com/wppconnect-team/wa-version
+// keruen: если связывание снова начнёт падать — обновить строку ниже.
+const WA_VERSION = process.env.WA_WEB_VERSION || '2.3000.1045716975-alpha'
+
 // Своя папка сессии: workgo не трогаем, чтобы два проекта не дрались за неё.
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: resolve(here, '.wa-session'), clientId: 'keruen' }),
   puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] },
+  webVersionCache: {
+    type: 'remote',
+    remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${WA_VERSION}.html`,
+  },
 })
 
 let ready = false
@@ -253,13 +266,69 @@ async function onMessage(msg) {
 
 /* ——— запуск ————————————————————————————————————————— */
 
-client.on('qr', (qr) => {
-  console.log('\nОтсканируйте QR в WhatsApp того номера, с которого будет писать KERUEN:\n')
+/* ——— страница с QR ————————————————————————————————— */
+
+// В PowerShell блоки QR съезжают по ширине символа, и камера их не читает.
+// Поэтому отдаём картинку страницей: она сама обновляется, когда WhatsApp
+// присылает новый код, и сама закрывается, когда связывание прошло.
+const QR_PORT = Number(process.env.KERUEN_QR_PORT || 8787)
+let qrDataUrl = null
+
+const qrServer = createServer(async (req, res) => {
+  if (req.url === '/state') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    return res.end(JSON.stringify({ ready, qr: qrDataUrl }))
+  }
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+  res.end(`<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<title>KERUEN · привязка WhatsApp</title>
+<style>
+ body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f2f0ee;
+      font:16px/1.5 Inter,system-ui,sans-serif;color:#1c1c1a}
+ .card{background:#fcfbf9;border-radius:22px;padding:28px;text-align:center;
+       box-shadow:0 4px 18px rgb(0 0 0/.06);max-width:420px}
+ h1{font-size:20px;margin:0 0 6px} p{color:#8e8c88;font-size:13px;margin:0 0 18px}
+ img{width:300px;height:300px;image-rendering:pixelated}
+ ol{text-align:left;font-size:13px;color:#8e8c88;padding-left:20px;margin:18px 0 0}
+ .ok{font-size:44px}
+</style></head><body><div class="card" id="c">
+<h1>Привязка WhatsApp</h1><p>Ждём код…</p></div>
+<script>
+async function tick(){
+  const s = await (await fetch('/state')).json();
+  const c = document.getElementById('c');
+  if (s.ready) {
+    c.innerHTML = '<div class="ok">✅</div><h1>Готово</h1>'
+      + '<p>Номер привязан. Вкладку можно закрыть.</p>';
+    return;
+  }
+  if (s.qr) {
+    c.innerHTML = '<h1>Привязка WhatsApp</h1>'
+      + '<p>Сканируйте с того номера, с которого будет писать KERUEN</p>'
+      + '<img src="' + s.qr + '" alt="QR">'
+      + '<ol><li>WhatsApp на телефоне</li><li>Настройки → Связанные устройства</li>'
+      + '<li>Привязка устройства</li><li>Наведите на код</li></ol>';
+  }
+  setTimeout(tick, 1500);
+}
+tick();
+</script></body></html>`)
+})
+
+client.on('qr', async (qr) => {
+  try {
+    qrDataUrl = await QRCode.toDataURL(qr, { width: 520, margin: 2 })
+  } catch (e) {
+    console.error('не смог отрисовать QR:', e.message)
+  }
+  console.log('\nОткройте и отсканируйте:  http://localhost:' + QR_PORT)
+  console.log('Он же в терминале, если браузера нет:\n')
   qrcodeTerminal.generate(qr, { small: true })
 })
 
 client.on('ready', async () => {
   ready = true
+  qrDataUrl = null
   await loadPoints()
   console.log('WhatsApp готов. Слушаю новые предложения.')
   await pushPendingOffers()
@@ -284,4 +353,12 @@ client.on('disconnected', (reason) => {
   console.error('WhatsApp отключился:', reason)
 })
 
+qrServer.listen(QR_PORT, () => {
+  const url = `http://localhost:${QR_PORT}`
+  console.log(`Страница привязки: ${url}`)
+  // Открываем сразу: код живёт около минуты, искать вкладку некогда.
+  if (process.platform === 'win32') spawn('cmd', ['/c', 'start', '', url], { detached: true }).unref()
+})
+
+console.log('Запускаю браузер WhatsApp — первый старт занимает до полуминуты…')
 client.initialize()

@@ -10,22 +10,62 @@ import type { Order } from '../lib/types'
 const UNLOAD_MIN = 30
 const AVG_KMH = 70
 
+/** Сколько раз машина едет порожней: выгрузка не совпала с погрузкой. */
+function breaksIn(seq: Order[]): number {
+  let n = 0
+  for (let i = 1; i < seq.length; i++) if (seq[i - 1].to_id !== seq[i].from_id) n++
+  return n
+}
+
 /**
- * Выстраивает рейсы в порядке движения: от базы машины идём по цепочке,
- * где выгрузка одного плеча совпадает с погрузкой следующего. Что не
- * состыковалось — дописываем по времени создания, чтобы ничего не потерять.
+ * Выстраивает рейсы так, чтобы порожних перегонов было как можно меньше:
+ * выгрузка одного плеча должна совпадать с погрузкой следующего.
+ *
+ * Жадный проход от базы машины тут ошибается. Пример с двух плеч:
+ * база в Актау, есть «Актау → Шетпе» и «Жанаозен → Актау». Жадность берёт
+ * первым то, что начинается от базы, упирается в Шетпе и лепит второе
+ * через 150 порожних километров. А если начать с Жанаозена, выгрузка в
+ * Актау совпадает с погрузкой — и порожних ноль.
+ *
+ * Плеч в дне единицы, поэтому перебираем все порядки и берём лучший.
+ * keruen: перебор до 7 плеч (5040 вариантов). Дальше — жадность от базы;
+ * если дни станут длиннее, менять на подбор по километрам, а не по стыкам.
  */
 function chainByRoute(list: Order[], baseId: string | null): Order[] {
-  const left = [...list].sort(
+  const byTime = [...list].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
   )
+  if (byTime.length < 2) return byTime
+
+  if (byTime.length <= 7) {
+    let best = byTime
+    let bestScore = Infinity
+
+    const walk = (rest: Order[], acc: Order[]) => {
+      if (!rest.length) {
+        // Меньше разрывов — лучше. При равенстве предпочитаем начать от базы:
+        // машина уже там стоит, лишний подход не нужен.
+        const score = breaksIn(acc) * 10 + (baseId && acc[0].from_id === baseId ? 0 : 1)
+        if (score < bestScore) {
+          bestScore = score
+          best = acc
+        }
+        return
+      }
+      for (let i = 0; i < rest.length; i++) {
+        walk([...rest.slice(0, i), ...rest.slice(i + 1)], [...acc, rest[i]])
+      }
+    }
+    walk(byTime, [])
+    return best
+  }
+
+  // Длинный день — возвращаемся к жадности от базы.
+  const left = [...byTime]
   const out: Order[] = []
   let at = baseId
-
   while (left.length) {
-    // Сначала плечо, которое начинается там, где машина стоит сейчас.
     let i = at ? left.findIndex((o) => o.from_id === at) : -1
-    // Стыковки нет — начинаем новую нитку с самого раннего оставшегося.
     if (i < 0) i = 0
     const [next] = left.splice(i, 1)
     out.push(next)
