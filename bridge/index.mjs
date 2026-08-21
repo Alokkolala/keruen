@@ -51,20 +51,29 @@ const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: fal
 
 /* ——— WhatsApp ——————————————————————————————————————— */
 
-// whatsapp-web.js тянет свою версию WhatsApp Web, и она протухает: тогда
-// телефон отвечает «не удалось связать устройство». Закрепляем рабочую.
-// Список живых версий: raw.githubusercontent.com/wppconnect-team/wa-version
-// keruen: если связывание снова начнёт падать — обновить строку ниже.
-const WA_VERSION = process.env.WA_WEB_VERSION || '2.3000.1045716975-alpha'
+// Версию WhatsApp Web не закрепляем: библиотека 1.34.7 рассчитана на
+// 2.3000.1017054665 и умеет внедряться только в близкие к ней. Свежая
+// версия из реестра ломала запуск с «Execution context was destroyed»
+// прямо на Client.inject.
+// keruen: если связывание начнёт падать по версии — задать WA_WEB_VERSION
+// с версией, близкой к той, что в node_modules/whatsapp-web.js/src/util/Constants.js
+const PINNED = process.env.WA_WEB_VERSION
 
 // Своя папка сессии: workgo не трогаем, чтобы два проекта не дрались за неё.
+// После первого сканирования QR больше не нужен — сессия лежит здесь.
+const SESSION_DIR = resolve(here, '.wa-session')
+
 const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: resolve(here, '.wa-session'), clientId: 'keruen' }),
+  authStrategy: new LocalAuth({ dataPath: SESSION_DIR, clientId: 'keruen' }),
   puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] },
-  webVersionCache: {
-    type: 'remote',
-    remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${WA_VERSION}.html`,
-  },
+  ...(PINNED
+    ? {
+        webVersionCache: {
+          type: 'remote',
+          remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${PINNED}.html`,
+        },
+      }
+    : {}),
 })
 
 let ready = false
@@ -348,9 +357,21 @@ client.on('message', (msg) => {
   onMessage(msg).catch((e) => console.error('ответ не обработан:', e.message))
 })
 
+client.on('authenticated', () => {
+  console.log('Сессия сохранена в bridge/.wa-session — QR больше не понадобится.')
+})
+
 client.on('disconnected', (reason) => {
   ready = false
   console.error('WhatsApp отключился:', reason)
+  // Разрыв не должен убивать мост: телефон мог уйти в сон или сеть моргнуть.
+  setTimeout(() => client.initialize().catch((e) => console.error(e.message)), 5000)
+})
+
+// Падение внутри puppeteer не должно ронять процесс: иначе мост умирает
+// молча посреди демо, и об этом узнаёшь, только когда сообщение не пришло.
+process.on('unhandledRejection', (e) => {
+  console.error('Сбой:', e instanceof Error ? e.message : e)
 })
 
 qrServer.listen(QR_PORT, () => {
@@ -360,5 +381,16 @@ qrServer.listen(QR_PORT, () => {
   if (process.platform === 'win32') spawn('cmd', ['/c', 'start', '', url], { detached: true }).unref()
 })
 
-console.log('Запускаю браузер WhatsApp — первый старт занимает до полуминуты…')
-client.initialize()
+const hasSession = existsSync(resolve(SESSION_DIR, 'session-keruen'))
+console.log(
+  hasSession
+    ? 'Сессия найдена — подключаюсь без QR…'
+    : 'Первый запуск: сейчас появится QR. Отсканируете один раз, дальше молча.',
+)
+
+client.initialize().catch((e) => {
+  console.error('\nЗапуск не удался:', e.message)
+  console.error('Если это «Execution context was destroyed» — снимите WA_WEB_VERSION')
+  console.error('и удалите bridge/.wa-session, затем запустите снова.')
+  process.exitCode = 1
+})
