@@ -11,6 +11,7 @@ const KEYS = [
   'SUPABASE_SERVICE_ROLE_KEY',
   'OPENROUTER_API_KEY',
   'OPENROUTER_MODEL',
+  'OPENROUTER_AUDIO_MODEL',
 ]
 
 const env = Object.fromEntries(

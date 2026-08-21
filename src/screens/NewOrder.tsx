@@ -1,8 +1,9 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Header, TabBar, TitleBar, Button, Failed } from '../ui/Shell'
 import { Icon } from '../ui/Icon'
 import { api } from '../lib/data'
+import { useVoice } from '../lib/voice'
 
 const EXAMPLES = [
   '3 тонны стройматериала из Актау в Шетпе к пятнице',
@@ -25,35 +26,9 @@ export default function NewOrder() {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [listening, setListening] = useState(false)
-  const recRef = useRef<any>(null)
-
-  function toggleVoice() {
-    const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition
-    if (!SR) {
-      setError('Браузер не поддерживает распознавание речи — напишите текстом')
-      return
-    }
-    if (listening) {
-      recRef.current?.stop()
-      return
-    }
-    const rec = new SR()
-    rec.lang = 'ru-RU'
-    rec.interimResults = true
-    rec.continuous = false
-    rec.onresult = (e: any) => {
-      const said = Array.from(e.results)
-        .map((r: any) => r[0].transcript)
-        .join(' ')
-      setText(said)
-    }
-    rec.onend = () => setListening(false)
-    rec.onerror = () => setListening(false)
-    recRef.current = rec
-    setListening(true)
-    rec.start()
-  }
+  const voice = useVoice(setText)
+  const listening = voice.state === 'listening'
+  const transcribing = voice.state === 'transcribing'
 
   async function submit() {
     if (!text.trim() || busy) return
@@ -89,17 +64,30 @@ export default function NewOrder() {
             className="placeholder:text-muted w-full resize-none bg-transparent pr-12 text-[14px] leading-5 outline-none"
           />
           <button
-            onClick={toggleVoice}
-            aria-label="Продиктовать"
+            onClick={voice.toggle}
+            disabled={transcribing}
+            aria-label={listening ? 'Остановить запись' : 'Продиктовать'}
             className={`absolute top-2.5 right-2.5 flex h-11 w-11 items-center justify-center rounded-full shadow-[0_2px_10px_rgb(0_0_0/0.1)] transition ${
               listening ? 'bg-yellow scale-110' : 'bg-card'
             }`}
           >
-            <Icon name="mic" size={20} />
+            {transcribing ? (
+              <span className="border-yellow-ink h-4 w-4 animate-spin rounded-full border-2 border-t-transparent" />
+            ) : (
+              <Icon name="mic" size={20} />
+            )}
           </button>
           <div className="bg-card text-muted mt-2 inline-flex items-center gap-2 rounded-full px-3.5 py-2 text-[12.5px]">
-            <Icon name="wave" size={14} className={listening ? 'text-yellow-ink animate-pulse' : ''} />
-            {listening ? 'Слушаю…' : 'или продиктуйте голосом'}
+            <Icon
+              name="wave"
+              size={14}
+              className={listening ? 'text-yellow-ink animate-pulse' : ''}
+            />
+            {listening
+              ? 'Слушаю — говорите, потом нажмите ещё раз'
+              : transcribing
+                ? 'Расшифровываю…'
+                : 'или продиктуйте голосом'}
           </div>
         </div>
         <div className="mt-2 flex justify-end">
@@ -119,6 +107,9 @@ export default function NewOrder() {
         ))}
       </div>
 
+      {voice.error && (
+        <Failed title="С микрофоном не вышло" detail={voice.error} onRetry={voice.toggle} />
+      )}
       {error && <Failed title="Не разобрал заявку" detail={error} onRetry={submit} />}
 
       <Button onClick={submit} disabled={busy || !text.trim()}>
