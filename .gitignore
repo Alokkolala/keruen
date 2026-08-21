@@ -29,3 +29,6 @@ dist-ssr
 .supabase-db-password
 .vercel
 .env*
+
+bridge/node_modules
+bridge/.wa-session
